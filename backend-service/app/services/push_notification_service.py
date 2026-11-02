@@ -45,7 +45,7 @@ class PushNotificationService:
         message = messaging.MulticastMessage(
             notification=messaging.Notification(title=title, body=body),
             data={key: str(value) for key, value in payload.items()},
-            tokens=clean_tokens,
+            fids=clean_tokens,
         )
 
         try:
@@ -93,7 +93,7 @@ class PushNotificationService:
                 "reward_key": reward_key,
                 "gems": str(gems),
             },
-            tokens=clean_tokens,
+            fids=clean_tokens,
         )
         try:
             response = await run_in_threadpool(
@@ -131,7 +131,7 @@ class PushNotificationService:
                 "route": "/",
                 "current_streak": str(current_streak),
             },
-            tokens=clean_tokens,
+            fids=clean_tokens,
         )
         try:
             response = await run_in_threadpool(messaging.send_each_for_multicast, message)
@@ -168,7 +168,7 @@ class PushNotificationService:
                 "route": "/vocabulary/word-of-day",
                 "word": word,
             },
-            tokens=clean_tokens,
+            fids=clean_tokens,
         )
         try:
             response = await run_in_threadpool(messaging.send_each_for_multicast, message)

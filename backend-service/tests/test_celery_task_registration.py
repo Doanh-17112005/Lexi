@@ -27,7 +27,8 @@ def test_every_module_defining_a_task_is_imported_by_the_worker():
     defined_in = {
         f"app.tasks.{path.stem}"
         for path in TASKS_DIR.glob("*.py")
-        if path.stem != "__init__" and "@celery_app.task" in path.read_text()
+        if path.stem != "__init__"
+        and "@celery_app.task" in path.read_text(encoding="utf-8")
     }
     missing = defined_in - set(celery_app.conf.include or [])
     assert not missing, (
@@ -49,7 +50,8 @@ def test_declared_task_names_match_their_module(registered_tasks: set[str]):
     mismatched = []
     for path in TASKS_DIR.glob("*.py"):
         for name in re.findall(
-            r'@celery_app\.task\(\s*name="([\w.]+)"', path.read_text()
+            r'@celery_app\.task\(\s*name="([\w.]+)"',
+            path.read_text(encoding="utf-8"),
         ):
             if not name.startswith(f"app.tasks.{path.stem}."):
                 mismatched.append(f"{path.name}: {name}")

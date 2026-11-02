@@ -891,7 +891,7 @@ async def bulk_import_vocabulary(
                         VocabularyItem.part_of_speech.in_({key[1] for key in pending}),
                     )
                 )
-            ).tuples().all()
+            ).all()
         )
         skipped += len(existing & pending.keys())
         rows = [value for key, value in pending.items() if key not in existing]

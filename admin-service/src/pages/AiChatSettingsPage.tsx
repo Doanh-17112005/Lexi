@@ -27,6 +27,7 @@ export const AiChatSettingsPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -40,12 +41,16 @@ export const AiChatSettingsPage = () => {
       const data = await response.json();
       // Backend returns flat AiConfig object; remap model_name → gemini_model
       if (data && data.model_name) {
+        setApiKeyConfigured(Boolean(data.gemini_api_key));
         setConfig({
           ...getDefaultConfig(),
           ...data,
           gemini_model: data.gemini_model ?? data.model_name,
+          // A masked key is status information, never an editable secret.
+          gemini_api_key: "",
         });
       } else {
+        setApiKeyConfigured(false);
         setConfig(getDefaultConfig());
       }
     } catch (error) {
@@ -75,12 +80,20 @@ export const AiChatSettingsPage = () => {
     setSaveError(null);
     setSaveSuccess(false);
     try {
-      const payload = { ...config, model_name: config.gemini_model };
+      const { gemini_api_key, ...nonSecretConfig } = config;
+      const newApiKey = gemini_api_key?.trim();
+      const payload = {
+        ...nonSecretConfig,
+        model_name: config.gemini_model,
+        ...(newApiKey ? { gemini_api_key: newApiKey } : {}),
+      };
       const response = await updateAiConfig(payload, authStore.accessToken ?? undefined);
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
         throw new Error(err.detail || response.statusText);
       }
+      if (newApiKey) setApiKeyConfigured(true);
+      setConfig((current) => current ? { ...current, gemini_api_key: "" } : current);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
     } catch (error: any) {
@@ -321,7 +334,9 @@ export const AiChatSettingsPage = () => {
               type={showApiKey ? "text" : "password"}
               value={config.gemini_api_key || ""}
               onChange={(e) => updateConfig("gemini_api_key", e.target.value)}
-              placeholder="AIza..." 
+              placeholder={apiKeyConfigured ? "Đã cấu hình — để trống để giữ nguyên" : "AIza..."}
+              autoComplete="new-password"
+              spellCheck={false}
               className="input"
               style={{ flex: 1 }}
             />

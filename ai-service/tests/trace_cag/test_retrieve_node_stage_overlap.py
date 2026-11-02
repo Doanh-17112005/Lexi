@@ -5,9 +5,8 @@ import time
 import uuid
 from unittest.mock import AsyncMock
 
-import pytest
-
 import api.services.trace_cag.retrieve as retrieve_mod
+import pytest
 from api.models.v3_schemas import RetrievalBundleV3, VectorHit
 
 STAGE_DELAY_S = 0.2
@@ -43,6 +42,10 @@ async def test_kg_and_vector_stages_run_concurrently_not_sequentially(monkeypatc
     monkeypatch.setattr(retrieve_mod, "_get_retrieval_v3", AsyncMock(return_value=_SlowRetrievalV3()))
     monkeypatch.setattr(retrieve_mod, "_kg_cache_get", lambda key: None)
     monkeypatch.setattr(retrieve_mod, "_kg_cache_set", lambda key, data: None)
+    # The synthetic stages deliberately take 200 ms, while production's
+    # default vector budget is 80 ms. Give this concurrency test a sufficient
+    # budget so it measures overlap instead of the timeout policy.
+    monkeypatch.setenv("TRACECAG_RETRIEVE_BUDGET_VECTOR_MS", "500")
 
     unique_query = f"How do I use the present perfect tense? {uuid.uuid4()}"
     state = {

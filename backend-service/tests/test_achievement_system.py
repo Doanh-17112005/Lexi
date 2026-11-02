@@ -175,6 +175,77 @@ class TestAchievementEvaluation:
         result = await checker._evaluate_condition(uuid4(), ach, stats)
         assert result is True
 
+    @staticmethod
+    def _scalar_result(value):
+        result = MagicMock()
+        result.scalar.return_value = value
+        return result
+
+    @pytest.mark.asyncio
+    async def test_speed_lessons_are_counted_from_completed_timed_progress(self):
+        db = AsyncMock(spec=AsyncSession)
+        db.execute.return_value = self._scalar_result(5)
+
+        stats = await AchievementCheckerService(db)._get_user_stats(
+            uuid4(), ["speed_lesson"]
+        )
+
+        assert stats["speed_lessons"] == 5
+        statement = str(db.execute.await_args.args[0])
+        assert "user_progress.status" in statement
+        assert "user_progress.time_spent_seconds >" in statement
+        assert "user_progress.time_spent_seconds <=" in statement
+
+    @pytest.mark.asyncio
+    async def test_social_interactions_count_follows_started_by_user(self):
+        db = AsyncMock(spec=AsyncSession)
+        db.execute.return_value = self._scalar_result(7)
+
+        stats = await AchievementCheckerService(db)._get_user_stats(
+            uuid4(), ["social_interaction"]
+        )
+
+        assert stats["social_interactions"] == 7
+        statement = str(db.execute.await_args.args[0])
+        assert "user_following.follower_id" in statement
+        assert "user_following.following_id" not in statement
+
+    @pytest.mark.asyncio
+    async def test_skill_badges_count_passed_lessons_from_real_labels(self):
+        db = AsyncMock(spec=AsyncSession)
+        result = MagicMock()
+        result.one.return_value = (20, 10, 21, 50)
+        db.execute.return_value = result
+
+        stats = await AchievementCheckerService(db)._get_user_stats(
+            uuid4(),
+            [
+                "grammar_mastered",
+                "culture_lesson",
+                "writing_complete",
+                "listening_complete",
+            ],
+        )
+
+        assert stats["grammar_mastered"] == 20
+        assert stats["culture_lessons"] == 10
+        assert stats["writing_completed"] == 21
+        assert stats["listening_completed"] == 50
+
+        query = db.execute.await_args.args[0]
+        statement = str(query).lower()
+        assert "lesson_completions" in statement
+        assert "lessons" in statement
+        assert "courses" in statement
+        assert "course_categories" in statement
+        assert "is_passed is true" in statement
+        assert "count(distinct" in statement
+
+        # SQLAlchemy parameterizes string values, so assert the canonical
+        # category and skill labels through the compiled parameter map.
+        params = set(query.compile().params.values())
+        assert {"grammar", "cultural-english", "writing", "listening"} <= params
+
     @pytest.mark.asyncio
     async def test_vocab_mastered(self, checker):
         """100 mastered words meets vocab_mastered=100."""

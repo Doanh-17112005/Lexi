@@ -3,12 +3,11 @@
 import ast
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 
 
 def _function_calls(path: str, function_name: str, class_name: str | None = None) -> set[str]:
-    tree = ast.parse((ROOT / path).read_text())
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
     scope = tree.body
     if class_name:
         scope = next(
@@ -46,6 +45,8 @@ def test_gamification_updates_lock_rows_and_claim_is_idempotent() -> None:
         "app/routes/challenges.py", "claim_daily_bonus"
     )
     assert {"begin_nested", "flush", "with_for_update"} <= bonus_calls
-    migration = (ROOT / "alembic/versions/add_challenge_reward_claim_unique.py").read_text()
+    migration = (
+        ROOT / "alembic/versions/add_challenge_reward_claim_unique.py"
+    ).read_text(encoding="utf-8")
     assert "create_unique_constraint" in migration
     assert '["user_id", "challenge_id", "claim_date"]' in migration

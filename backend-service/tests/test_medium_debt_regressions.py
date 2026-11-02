@@ -199,7 +199,7 @@ hello,Repeated action,verb
 bye,Farewell,noun
 """
     query_result = MagicMock()
-    query_result.tuples.return_value.all.return_value = [("hello", "noun")]
+    query_result.all.return_value = [("hello", "noun")]
     db = MagicMock()
     db.execute = AsyncMock(return_value=query_result)
     db.commit = AsyncMock()

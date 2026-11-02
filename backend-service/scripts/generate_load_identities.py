@@ -78,7 +78,10 @@ def main() -> int:
     fd, temporary_name = tempfile.mkstemp(
         prefix=f".{args.output.name}.", dir=args.output.parent
     )
-    os.chmod(fd, 0o600)
+    # Windows does not support chmod-by-file-descriptor. Applying the mode to
+    # the named temporary file works on every supported platform and still
+    # happens before any token is written.
+    os.chmod(temporary_name, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as destination:
             for user_id in user_ids:

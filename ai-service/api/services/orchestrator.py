@@ -11,7 +11,6 @@ Responsibilities:
 """
 
 import asyncio
-import fcntl
 import logging
 import os
 from datetime import datetime
@@ -19,6 +18,32 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 _kuzu_process_lock_file = None
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
+
+
+def _lock_file(lock_file) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return
+    lock_file.seek(0)
+    if lock_file.tell() == os.fstat(lock_file.fileno()).st_size:
+        lock_file.write("\0")
+        lock_file.flush()
+    lock_file.seek(0)
+    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+
+
+def _unlock_file(lock_file) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        return
+    lock_file.seek(0)
+    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _get_kg_service_with_process_lock():
@@ -32,8 +57,8 @@ def _get_kg_service_with_process_lock():
     if _kuzu_process_lock_file is None:
         lock_file = open(lock_path, "a", encoding="utf-8")
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            _lock_file(lock_file)
+        except (BlockingIOError, OSError) as exc:
             lock_file.close()
             raise RuntimeError(
                 "Kuzu snapshot is already owned; use one worker or a separate KUZU_DB_PATH"
@@ -49,7 +74,7 @@ def _get_kg_service_with_process_lock():
 def _release_kg_process_lock() -> None:
     global _kuzu_process_lock_file
     if _kuzu_process_lock_file is not None:
-        fcntl.flock(_kuzu_process_lock_file.fileno(), fcntl.LOCK_UN)
+        _unlock_file(_kuzu_process_lock_file)
         _kuzu_process_lock_file.close()
         _kuzu_process_lock_file = None
 

@@ -2,15 +2,21 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = ROOT / "scripts" / "entrypoint.sh"
 
 
 def _write_executable(path: Path, source: str) -> None:
-    path.write_text(source)
+    path.write_text(source, encoding="utf-8")
     path.chmod(0o755)
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Linux container entrypoint integration requires POSIX executable shims",
+)
 def test_fresh_database_bootstrap_uses_create_tables_and_redacts_database_url(
     tmp_path,
 ):
@@ -59,7 +65,7 @@ printf 'uvicorn %s\n' "$*" >> "$COMMAND_LOG"
     )
 
     output = result.stdout + result.stderr
-    commands = command_log.read_text().splitlines()
+    commands = command_log.read_text(encoding="utf-8").splitlines()
     assert secret_url not in output
     assert "private-user" not in output
     assert "super-secret" not in output
@@ -72,6 +78,10 @@ printf 'uvicorn %s\n' "$*" >> "$COMMAND_LOG"
     assert (ROOT / "scripts" / "create_tables.py").is_file()
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Linux container entrypoint integration requires POSIX executable shims",
+)
 def test_unreachable_probe_redacts_secret_exception_and_still_starts_api(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -118,11 +128,11 @@ printf 'uvicorn %s\n' "$*" >> "$COMMAND_LOG"
     assert secret_url not in output
     assert "secret-user" not in output
     assert "secret-password" not in output
-    assert command_log.read_text().startswith("uvicorn app.main:app")
+    assert command_log.read_text(encoding="utf-8").startswith("uvicorn app.main:app")
 
 
 def test_probe_source_logs_exception_type_not_exception_message():
-    source = ENTRYPOINT.read_text()
+    source = ENTRYPOINT.read_text(encoding="utf-8")
 
     assert 'type(e).__name__' in source
     assert 'f"DB check error: {e}"' not in source

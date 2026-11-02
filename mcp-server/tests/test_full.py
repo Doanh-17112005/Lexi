@@ -65,14 +65,14 @@ def test_server_imports():
         record("server.py module load", "fail", str(e))
         failed.append("server")
 
-    return len(failed) == 0
+    assert not failed, f"Failed imports: {failed}"
 
 
 def test_json_rpc_handshake():
     """Send actual JSON-RPC initialize message via subprocess."""
     print("\n【2】MCP Server — JSON-RPC protocol handshake")
 
-    python = str(MCP_ROOT / "venv" / "bin" / "python3.12")
+    python = sys.executable
     server_py = str(MCP_ROOT / "server.py")
 
     msg = json.dumps({
@@ -104,27 +104,27 @@ def test_json_rpc_handshake():
                 if resp.get("result", {}).get("serverInfo", {}).get("name") == "lexilingo-mcp":
                     record("initialize handshake", "pass",
                            f"serverInfo={resp['result']['serverInfo']}", elapsed)
-                    return True
+                    return
                 else:
                     record("initialize handshake", "warn",
                            f"unexpected response: {json.dumps(resp)[:120]}", elapsed)
-                    return False
+                    raise AssertionError("Unexpected initialize response")
             except json.JSONDecodeError:
                 record("initialize handshake", "fail",
                        f"non-JSON stdout: {stdout[:200]}", elapsed)
-                return False
+                raise AssertionError("MCP server returned non-JSON output")
         else:
             stderr_text = stderr.decode()[:300]
             record("initialize handshake", "fail",
                    f"no stdout. stderr: {stderr_text}", elapsed)
-            return False
+            raise AssertionError("MCP server returned no output")
     except subprocess.TimeoutExpired:
         proc.kill()
         record("initialize handshake", "fail", "process timed out after 8s")
-        return False
+        raise AssertionError("MCP initialize handshake timed out")
     except Exception as e:
         record("initialize handshake", "fail", str(e))
-        return False
+        raise AssertionError("MCP initialize handshake failed") from e
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -159,9 +159,12 @@ def test_i18n_manager():
     for lang in ["en", "vi", "ja", "ko", "zh", "fr", "es"]:
         fp = i18n_dir / f"{lang}.json"
         if fp.exists():
-            data = _json.loads(fp.read_text())
+            data = _json.loads(fp.read_text(encoding="utf-8"))
             data.pop("__mcp_test__", None)
-            fp.write_text(_json.dumps(data, ensure_ascii=False, indent=2))
+            fp.write_text(
+                _json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
     record("cleanup test key", "pass")
 
 

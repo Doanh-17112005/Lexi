@@ -2,13 +2,13 @@ import asyncio
 import struct
 
 import pytest
-
 from api.services.stt.audio_ingest import HEADER, parse_audio_frame
 from api.services.stt.config import STTConfig
 from api.services.stt.metrics import STTMetrics
 from api.services.stt.model_registry import STTModelRegistry
 from api.services.stt.schemas import StartMessage
 from api.services.stt.voice_session import VoiceSession
+
 from tests.stt.fakes import FakePrimary, FakePrimarySession, FakeVerifier
 
 
@@ -291,11 +291,13 @@ async def test_metrics_records_session_duration(tmp_path):
         StartMessage(session_id="duration-metrics"), config, registry, metrics
     )
     await session.start_worker()
-    await asyncio.sleep(0.01)
+    # Stay above Windows' 15.625 ms event-loop clock quantum; shorter sleeps
+    # may be rounded down to an immediate wake-up.
+    await asyncio.sleep(0.03)
     await session.stop()
     stats = metrics.latency_stats("stt_session_duration_s")
     assert stats["count"] == 1
-    assert stats["avg"] >= 0.01
+    assert stats["avg"] >= 0.02
 
 
 @pytest.mark.asyncio

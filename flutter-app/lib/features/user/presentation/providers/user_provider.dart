@@ -142,7 +142,7 @@ class UserProvider with ChangeNotifier {
       );
 
       final result = await setDailyGoalUseCase(SetDailyGoalParams(goal: goal));
-      return result.fold(
+      final success = result.fold<bool>(
         (failure) {
           _errorMessage = failure.message;
           notifyListeners();
@@ -154,6 +154,7 @@ class UserProvider with ChangeNotifier {
           return true;
         },
       );
+      return success;
     } catch (e) {
       _errorMessage = e.toString();
       notifyListeners();

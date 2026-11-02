@@ -56,7 +56,9 @@ class VoiceSession:
         self._finalizer = SentenceFinalizer(config, registry, self.metrics)
         self._downstream_futures: dict[asyncio.Future, str] = {}
         # timing
-        self._session_start_monotonic = time.monotonic()
+        # GetTickCount64-backed monotonic() is only 15.625 ms on some Windows
+        # hosts. perf_counter() keeps short voice-session metrics accurate.
+        self._session_start_monotonic = time.perf_counter()
         self._first_audio_at: float | None = None
         self._first_partial_emitted = False
         self._vad_speech_end_at: float | None = None
@@ -262,7 +264,7 @@ class VoiceSession:
                         }
                     )
                 await asyncio.gather(group, return_exceptions=True)
-        session_duration_s = time.monotonic() - self._session_start_monotonic
+        session_duration_s = time.perf_counter() - self._session_start_monotonic
         self.metrics.record_latency("stt_session_duration_s", session_duration_s)
         if self._finals_count > 0:
             self.metrics.record_latency(

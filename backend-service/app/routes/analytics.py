@@ -3,8 +3,8 @@ Admin Analytics Routes
 Endpoints for dashboard charts, user metrics, content performance, and vocabulary analytics.
 """
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from collections import defaultdict
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, case, func, select
@@ -12,12 +12,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_admin
-from app.models.course import Course
-from app.models.progress import DailyActivity, LessonCompletion, UserCourseProgress
+from app.models.course import Course, Lesson
+from app.models.progress import (
+    DailyActivity,
+    LessonAttempt,
+    LessonCompletion,
+    UserCourseProgress,
+)
 from app.models.user import User
 from app.models.vocabulary import UserVocabulary, VocabularyItem
 
 router = APIRouter(prefix="/admin/analytics", tags=["Analytics"])
+
+
+def _retention_rate(
+    user_ids: set,
+    signup_dates: dict,
+    activity_dates: dict,
+    offset_days: int,
+    as_of: date,
+) -> float:
+    """Return exact-day cohort retention using only users old enough to qualify."""
+    eligible = {
+        user_id
+        for user_id in user_ids
+        if signup_dates[user_id] + timedelta(days=offset_days) <= as_of
+    }
+    if not eligible:
+        return 0.0
+    retained = sum(
+        1
+        for user_id in eligible
+        if signup_dates[user_id] + timedelta(days=offset_days)
+        in activity_dates.get(user_id, set())
+    )
+    return round(retained / len(eligible) * 100, 2)
 
 
 # ============================================================================
@@ -36,7 +65,7 @@ async def get_dashboard_kpis(
     total_users = await db.scalar(select(func.count(User.id)))
 
     # Active users in last 7 days
-    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    seven_days_ago = datetime.now(UTC) - timedelta(days=7)
     active_users_7d = await db.scalar(
         select(func.count(func.distinct(DailyActivity.user_id)))
         .where(DailyActivity.activity_date >= seven_days_ago.date())
@@ -44,18 +73,18 @@ async def get_dashboard_kpis(
 
     # Total courses
     total_courses = await db.scalar(
-        select(func.count(Course.id)).where(Course.is_published == True)
+        select(func.count(Course.id)).where(Course.is_published.is_(True))
     )
 
     # Total lessons completed today
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     lessons_completed_today = await db.scalar(
         select(func.count(LessonCompletion.id))
         .where(func.date(LessonCompletion.completed_at) == today)
     )
 
     # Average DAU in last 30 days
-    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
     dau_data = await db.execute(
         select(
             DailyActivity.activity_date,
@@ -88,7 +117,7 @@ async def get_user_growth(
     Get user growth data for the specified number of days.
     Returns daily new users and cumulative total users.
     """
-    end_date = datetime.now(timezone.utc).date()
+    end_date = datetime.now(UTC).date()
     start_date = end_date - timedelta(days=days)
 
     # Get daily registrations
@@ -137,7 +166,7 @@ async def get_engagement(
     """
     Get DAU, WAU, MAU engagement metrics by week.
     """
-    end_date = datetime.now(timezone.utc).date()
+    end_date = datetime.now(UTC).date()
     ranges = []
     expressions = []
     for index, i in enumerate(reversed(range(weeks))):
@@ -205,7 +234,7 @@ async def get_course_popularity(
             func.count(UserCourseProgress.id).label("enrollments")
         )
         .join(UserCourseProgress, UserCourseProgress.course_id == Course.id)
-        .where(Course.is_published == True)
+        .where(Course.is_published.is_(True))
         .group_by(Course.id, Course.title)
         .order_by(func.count(UserCourseProgress.id).desc())
         .limit(6)
@@ -285,8 +314,8 @@ async def get_completion_funnel(
 
 @router.get("/user-metrics")
 async def get_user_metrics(
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -296,7 +325,7 @@ async def get_user_metrics(
     if end_date:
         end = datetime.fromisoformat(end_date).date()
     else:
-        end = datetime.now(timezone.utc).date()
+        end = datetime.now(UTC).date()
 
     if start_date:
         start = datetime.fromisoformat(start_date).date()
@@ -355,13 +384,24 @@ async def get_user_metrics(
         )
     ) or 0
 
+    avg_session_duration = await db.scalar(
+        select(func.avg(LessonAttempt.time_spent_ms / 60000.0)).where(
+            and_(
+                LessonAttempt.finished_at.is_not(None),
+                LessonAttempt.time_spent_ms > 0,
+                func.date(LessonAttempt.finished_at) >= start,
+                func.date(LessonAttempt.finished_at) <= end,
+            )
+        )
+    ) or 0
+
     return {
         "metrics": {
             "dau": int(avg_dau),
             "wau": wau,
             "mau": mau,
             "total_signups": signups,
-            "avg_session_duration": 0,  # Placeholder - implement if session tracking exists
+            "avg_session_duration": float(avg_session_duration),
         }
     }
 
@@ -375,24 +415,63 @@ async def get_retention_cohorts(
     Get cohort retention analysis.
     Cohorts are grouped by signup week.
     """
-    # Get cohorts from last 12 weeks
-    end_date = datetime.now(timezone.utc).date()
-    start_date = end_date - timedelta(weeks=12)
+    # Use Monday-based signup cohorts. Retention is exact-day D1/D7/D30 and
+    # only includes users old enough to have reached the requested horizon.
+    end_date = datetime.now(UTC).date()
+    current_week = end_date - timedelta(days=end_date.weekday())
+    start_date = current_week - timedelta(weeks=11)
+    range_end = current_week + timedelta(days=7)
 
-    # This is a simplified version - full implementation would require more complex queries
-    # For MVP, return empty or sample data
-    return {
-        "cohorts": [
+    user_result = await db.execute(
+        select(User.id, User.created_at).where(
+            and_(
+                User.created_at >= datetime.combine(start_date, datetime.min.time(), tzinfo=UTC),
+                User.created_at < datetime.combine(range_end, datetime.min.time(), tzinfo=UTC),
+            )
+        )
+    )
+    signup_dates = {row.id: row.created_at.date() for row in user_result.fetchall()}
+
+    activity_dates: dict = defaultdict(set)
+    if signup_dates:
+        activity_result = await db.execute(
+            select(DailyActivity.user_id, DailyActivity.activity_date).where(
+                and_(
+                    DailyActivity.user_id.in_(signup_dates),
+                    DailyActivity.activity_date >= start_date,
+                    DailyActivity.activity_date <= end_date,
+                )
+            )
+        )
+        for row in activity_result.fetchall():
+            activity_dates[row.user_id].add(row.activity_date)
+
+    cohort_users: dict = defaultdict(set)
+    for user_id, signup_date in signup_dates.items():
+        week_start = signup_date - timedelta(days=signup_date.weekday())
+        cohort_users[week_start].add(user_id)
+
+    cohorts = []
+    for index in range(12):
+        cohort_date = start_date + timedelta(weeks=index)
+        user_ids = cohort_users.get(cohort_date, set())
+        cohorts.append(
             {
-                "cohort_date": (start_date + timedelta(weeks=i)).isoformat(),
-                "users": 0,
-                "d1_retention": 0.0,
-                "d7_retention": 0.0,
-                "d30_retention": 0.0,
+                "cohort_date": cohort_date.isoformat(),
+                "users": len(user_ids),
+                "d1_retention": _retention_rate(
+                    user_ids, signup_dates, activity_dates, 1, end_date
+                ),
+                "d7_retention": _retention_rate(
+                    user_ids, signup_dates, activity_dates, 7, end_date
+                ),
+                "d30_retention": _retention_rate(
+                    user_ids, signup_dates, activity_dates, 30, end_date
+                ),
             }
-            for i in range(12)
-        ]
-    }
+        )
+
+    return {"cohorts": cohorts}
 
 
 # ============================================================================
@@ -407,19 +486,44 @@ async def get_content_performance(
     """
     Get course and lesson performance metrics.
     """
-    # Course performance
-    course_result = await db.execute(
+    # Aggregate enrollments independently from lesson attempts. Joining all
+    # three tables directly multiplies rows and silently skews averages.
+    progress_metrics = (
         select(
-            Course.id,
-            Course.title,
-            func.count(func.distinct(UserCourseProgress.id)).label("enrollments"),
+            UserCourseProgress.course_id.label("course_id"),
+            func.count(UserCourseProgress.id).label("enrollments"),
             func.count(
                 case((UserCourseProgress.progress_percentage >= 100, 1))
             ).label("completions"),
         )
-        .outerjoin(UserCourseProgress, UserCourseProgress.course_id == Course.id)
-        .where(Course.is_published == True)
-        .group_by(Course.id, Course.title)
+        .group_by(UserCourseProgress.course_id)
+        .subquery()
+    )
+    attempt_metrics = (
+        select(
+            Lesson.course_id.label("course_id"),
+            func.avg(LessonAttempt.score).label("avg_score"),
+            func.avg(LessonAttempt.time_spent_ms / 60000.0).label("avg_time_minutes"),
+        )
+        .join(LessonAttempt, LessonAttempt.lesson_id == Lesson.id)
+        .where(LessonAttempt.finished_at.is_not(None))
+        .group_by(Lesson.course_id)
+        .subquery()
+    )
+
+    course_result = await db.execute(
+        select(
+            Course.id,
+            Course.title,
+            func.coalesce(progress_metrics.c.enrollments, 0).label("enrollments"),
+            func.coalesce(progress_metrics.c.completions, 0).label("completions"),
+            func.coalesce(attempt_metrics.c.avg_score, 0.0).label("avg_score"),
+            func.coalesce(attempt_metrics.c.avg_time_minutes, 0.0).label("avg_time_minutes"),
+        )
+        .outerjoin(progress_metrics, progress_metrics.c.course_id == Course.id)
+        .outerjoin(attempt_metrics, attempt_metrics.c.course_id == Course.id)
+        .where(Course.is_published.is_(True))
+        .order_by(Course.title)
     )
 
     courses = []
@@ -431,12 +535,33 @@ async def get_content_performance(
             "enrollments": row.enrollments,
             "completions": row.completions,
             "completion_rate": completion_rate,
-            "avg_score": 0.0,  # Placeholder
-            "avg_time_minutes": 0,  # Placeholder
+            "avg_score": float(row.avg_score or 0),
+            "avg_time_minutes": float(row.avg_time_minutes or 0),
         })
 
-    # Lesson difficulty (simplified - would need LessonAttempt data for full metrics)
-    lessons = []  # Placeholder for MVP
+    lesson_result = await db.execute(
+        select(
+            Lesson.id,
+            Lesson.title,
+            func.count(LessonAttempt.id).label("attempts"),
+            func.count(case((LessonAttempt.passed.is_(True), 1))).label("completions"),
+            func.coalesce(func.avg(LessonAttempt.score), 0.0).label("avg_score"),
+        )
+        .join(LessonAttempt, LessonAttempt.lesson_id == Lesson.id)
+        .where(LessonAttempt.finished_at.is_not(None))
+        .group_by(Lesson.id, Lesson.title)
+        .order_by(func.avg(LessonAttempt.score).asc(), Lesson.title)
+    )
+    lessons = [
+        {
+            "lesson_id": str(row.id),
+            "lesson_title": row.title,
+            "attempts": row.attempts,
+            "completions": row.completions,
+            "avg_score": float(row.avg_score or 0),
+        }
+        for row in lesson_result.fetchall()
+    ]
 
     return {
         "courses": courses,
@@ -486,7 +611,8 @@ async def get_vocabulary_effectiveness(
             func.count(UserVocabulary.id).label("total"),
             func.count(
                 case((UserVocabulary.status == 'mastered', 1))
-            ).label("mastered")
+            ).label("mastered"),
+            func.avg(UserVocabulary.total_reviews).label("avg_reviews"),
         )
         .join(UserVocabulary, UserVocabulary.vocabulary_id == VocabularyItem.id)
         .group_by(VocabularyItem.id, VocabularyItem.word)
@@ -501,7 +627,7 @@ async def get_vocabulary_effectiveness(
         hardest_words.append({
             "word": row.word,
             "mastery_rate": mastery_rate,
-            "avg_reviews": 0,  # Placeholder - would need per-word review data
+            "avg_reviews": float(row.avg_reviews or 0),
         })
 
     return {

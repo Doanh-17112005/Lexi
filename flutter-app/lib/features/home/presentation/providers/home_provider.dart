@@ -212,14 +212,9 @@ class HomeProvider with ChangeNotifier {
       // Set current user
       _currentUser = user;
 
-      // Load today's goal (mock data for now)
-      _todayGoal = DailyGoal(
-        id: 1, // Mock ID
-        userId: user.id,
-        date: DateTime.now(),
-        targetXP: 50,
-        earnedXP: 20,
-      );
+      // Daily XP comes from the backend-backed weekly progress response.
+      // A locally configured DailyGoal may still be injected through
+      // setTodayGoal(), but never replace real progress with demo values.
 
       _dashboardError = null;
     } catch (e) {

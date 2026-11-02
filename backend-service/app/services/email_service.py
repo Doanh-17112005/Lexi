@@ -62,17 +62,14 @@ class EmailService:
         """Send password-reset email with a tokenized reset URL.
 
         Returns True when sent successfully. If SMTP is not configured, returns
-        False after logging a warning and the generated reset URL for local dev.
+        False without logging the reset token or tokenized URL.
         """
         encoded_token = quote(reset_token, safe="")
         reset_link = f"{settings.effective_password_reset_url_base}?token={encoded_token}"
 
         if not settings.SMTP_HOST:
             logger.warning(
-                "SMTP_HOST not configured. Password reset email was not sent. "
-                "Generated reset URL for %s: %s",
-                to_email,
-                reset_link,
+                "SMTP_HOST not configured. Password reset email was not sent."
             )
             return False
 
@@ -117,17 +114,14 @@ class EmailService:
         """Send email verification link to a newly registered user.
 
         Returns True when sent successfully. If SMTP is not configured, returns
-        False after logging a warning and the generated verification URL for local dev.
+        False without logging the verification token or tokenized URL.
         """
         from urllib.parse import quote
         encoded_token = quote(token, safe="")
         verify_link = f"{settings.effective_email_verification_url_base}?token={encoded_token}"
         if not settings.SMTP_HOST:
             logger.warning(
-                "SMTP_HOST not configured. Verification email was not sent. "
-                "Generated verification URL for %s: %s",
-                to_email,
-                verify_link,
+                "SMTP_HOST not configured. Verification email was not sent."
             )
             return False
 

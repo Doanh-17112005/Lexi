@@ -21,13 +21,19 @@ import {
   updateQuestion,
   updateTestExam
 } from "../lib/adminApi";
+import {
+  generateAiLesson,
+  type GeneratedLesson,
+  type GenerateLessonRequest,
+} from "../lib/aiContentApi";
 
 type BulkImportResult = { created: number; skipped: number; errors: string[] };
 
 const tabs = [
   { key: "grammar", label: "Ngữ pháp" },
   { key: "questions", label: "Question Bank" },
-  { key: "tests", label: "Test Exams" }
+  { key: "tests", label: "Test Exams" },
+  { key: "ai", label: "AI Lesson" },
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
@@ -46,6 +52,8 @@ export const ContentLabPage = () => {
 
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<BulkImportResult | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generatedLesson, setGeneratedLesson] = useState<GeneratedLesson | null>(null);
   const grammarFileRef = useRef<HTMLInputElement>(null);
   const questionFileRef = useRef<HTMLInputElement>(null);
   const testFileRef = useRef<HTMLInputElement>(null);
@@ -75,6 +83,11 @@ export const ContentLabPage = () => {
     passing_score: 70,
     question_ids: "",
     is_published: false
+  });
+  const [aiForm, setAiForm] = useState<GenerateLessonRequest>({
+    topic: "",
+    cefr_level: "A1",
+    source_text: "",
   });
 
   const loadAll = async () => {
@@ -256,6 +269,20 @@ export const ContentLabPage = () => {
       await loadAll();
     } catch (err: any) {
       setError(err?.message || (editingTestId ? "Cập nhật test exam thất bại" : "Tạo test exam thất bại"));
+    }
+  };
+
+  const handleGenerateLesson = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setGenerating(true);
+    setError(null);
+    setGeneratedLesson(null);
+    try {
+      setGeneratedLesson(await generateAiLesson(aiForm));
+    } catch (err: any) {
+      setError(err?.message || "Không thể tạo bài học bằng AI");
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -602,6 +629,90 @@ export const ContentLabPage = () => {
                 )}
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {tab === "ai" && (
+        <div className="grid-2">
+          <div className="panel-inner">
+            <SectionHeader
+              title="Tạo bài học từ nguồn"
+              description="Gemini phân tích nguồn, tạo từ vựng và 3 câu quiz. Khóa học mới luôn ở trạng thái draft."
+            />
+            <form className="form" onSubmit={handleGenerateLesson}>
+              <label>
+                Chủ đề
+                <input
+                  required
+                  minLength={3}
+                  maxLength={200}
+                  value={aiForm.topic}
+                  onChange={(e) => setAiForm({ ...aiForm, topic: e.target.value })}
+                  placeholder="Ví dụ: Job interviews"
+                />
+              </label>
+              <label>
+                CEFR
+                <select
+                  value={aiForm.cefr_level}
+                  onChange={(e) => setAiForm({
+                    ...aiForm,
+                    cefr_level: e.target.value as GenerateLessonRequest["cefr_level"],
+                  })}
+                >
+                  {"A1 A2 B1 B2 C1 C2".split(" ").map((level) => (
+                    <option key={level} value={level}>{level}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Nội dung nguồn
+                <textarea
+                  required
+                  minLength={50}
+                  maxLength={8000}
+                  rows={12}
+                  value={aiForm.source_text}
+                  onChange={(e) => setAiForm({ ...aiForm, source_text: e.target.value })}
+                  placeholder="Dán đoạn văn hoặc bài viết nguồn (50–8.000 ký tự)…"
+                />
+                <small>{aiForm.source_text.length.toLocaleString()} / 8.000 ký tự</small>
+              </label>
+              <button className="primary-button" type="submit" disabled={generating}>
+                {generating ? "Đang tạo và lưu…" : "Tạo bài học draft"}
+              </button>
+            </form>
+          </div>
+
+          <div className="panel-inner" aria-live="polite">
+            <SectionHeader title="Kết quả" description="Kiểm tra nội dung trước khi xuất bản khóa học." />
+            {!generatedLesson && !generating && (
+              <div className="empty-state">Bài học vừa tạo sẽ xuất hiện tại đây.</div>
+            )}
+            {generating && <div className="loading">AI đang xử lý nội dung nguồn…</div>}
+            {generatedLesson && (
+              <div>
+                <div className="table-title">{generatedLesson.lesson.title}</div>
+                <p className="table-sub">{generatedLesson.lesson.description}</p>
+                <p><strong>Khóa học:</strong> {generatedLesson.course.title} ({generatedLesson.course.level})</p>
+                <p><strong>Unit:</strong> {generatedLesson.unit.title}</p>
+                <p><strong>Kết quả học:</strong> {generatedLesson.lesson.outcome}</p>
+                <p>
+                  <strong>Nội dung:</strong> {generatedLesson.vocabulary_saved} từ vựng · {generatedLesson.quizzes.length} quiz · {generatedLesson.lesson.estimated_minutes} phút
+                </p>
+                <div className="form-row">
+                  <a className="primary-button" href="/admin/courses">Mở khóa học</a>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => setGeneratedLesson(null)}
+                  >
+                    Tạo bài khác
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

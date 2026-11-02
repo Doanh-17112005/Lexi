@@ -1,15 +1,25 @@
-"""Routes module initialization — export all active routers."""
+"""Route package without eager cross-feature imports.
 
-from api.routes.ai import router as ai_router
-from api.routes.chat import router as chat_router
-from api.routes.stt import router as stt_router
-from api.routes.tts import router as tts_router
-from api.routes.topic_chat import router as topic_chat_router
+Importing ``api.routes.voice`` must not initialize TRACE-CAG, MongoDB chat, or
+other unrelated stacks. Legacy ``*_router`` exports remain available lazily.
+"""
 
-__all__ = [
-    "ai_router",
-    "chat_router",
-    "stt_router",
-    "tts_router",
-    "topic_chat_router",
-]
+from importlib import import_module
+from typing import Any
+
+_ROUTER_MODULES = {
+    "ai_router": "ai",
+    "chat_router": "chat",
+    "stt_router": "stt",
+    "tts_router": "tts",
+    "topic_chat_router": "topic_chat",
+}
+
+__all__ = list(_ROUTER_MODULES)
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _ROUTER_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    return import_module(f"{__name__}.{module_name}").router

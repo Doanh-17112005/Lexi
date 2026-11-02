@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import stat
 import threading
@@ -10,7 +11,6 @@ import uuid
 from pathlib import Path
 
 from locust import HttpUser, between, events, task
-
 
 REPEATED_TOPICS = [
     "Explain past simple with one example",
@@ -29,9 +29,12 @@ REQUEST_TIMEOUT_SECONDS = 60
 
 
 def _load_identities(path: str) -> list[tuple[str, str]]:
-    mode = stat.S_IMODE(Path(path).stat().st_mode)
-    if mode & 0o077:
-        raise PermissionError("identity file must not be accessible by group/other")
+    if os.name != "nt":
+        mode = stat.S_IMODE(Path(path).stat().st_mode)
+        if mode & 0o077:
+            raise PermissionError(
+                "identity file must not be accessible by group/other"
+            )
     identities = []
     seen_tokens: set[str] = set()
     seen_user_ids: set[str] = set()

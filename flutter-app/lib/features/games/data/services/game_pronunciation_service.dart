@@ -1,3 +1,7 @@
+// just_audio currently marks its in-memory StreamAudioSource API experimental;
+// this adapter isolates that dependency behind AudioPlayerAdapter.
+// ignore_for_file: experimental_member_use
+
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:lexilingo_app/features/voice/data/datasources/voice_remote_datasource.dart';
@@ -65,8 +69,8 @@ class GamePronunciationService {
   GamePronunciationService({
     required VoiceRemoteDataSource voiceDataSource,
     AudioPlayerAdapter? player,
-  })  : _voiceDataSource = voiceDataSource,
-        _player = player ?? JustAudioPlayerAdapter();
+  }) : _voiceDataSource = voiceDataSource,
+       _player = player ?? JustAudioPlayerAdapter();
 
   bool _isPlaying = false;
   AudioError? _lastError;
@@ -119,8 +123,9 @@ class GamePronunciationService {
   }
 
   Future<int> _playFromTts(String text, int playsLeft) async {
-    final Uint8List audioBytes =
-        await _voiceDataSource.synthesizeSpeech(text: text);
+    final Uint8List audioBytes = await _voiceDataSource.synthesizeSpeech(
+      text: text,
+    );
 
     final startFuture = _player.playerStateStream
         .firstWhere((state) => state.playing)

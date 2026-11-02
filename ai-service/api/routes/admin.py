@@ -86,6 +86,11 @@ def mask_api_key(api_key: Optional[str]) -> Optional[str]:
     return f"{api_key[:4]}***...***{api_key[-3:]}"
 
 
+def is_masked_api_key(api_key: Optional[str]) -> bool:
+    """Return whether a value is the display-only form returned by this API."""
+    return bool(api_key and re.fullmatch(r".{4}\*{3}\.\.\.\*{3}.{3}", api_key))
+
+
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
     return slug or "topic"
@@ -246,12 +251,19 @@ async def update_admin_config(
     Update AI service configuration.
     
     Super admin only. Stores configuration in database.
-    If gemini_api_key is empty or None, system will fallback to environment variable.
+    A missing or masked key preserves the stored secret. An explicit empty
+    string removes the stored override and falls back to the environment.
     """
     try:
-        # Validate API key format if provided
-        if config.gemini_api_key:
-            if not config.gemini_api_key.startswith("AIza"):
+        existing = await db.admin_config.find_one({"_id": "ai_config"}) or {}
+        submitted_key = config.gemini_api_key
+        if submitted_key is None or is_masked_api_key(submitted_key):
+            persisted_key = existing.get("gemini_api_key")
+        elif not submitted_key.strip():
+            persisted_key = None
+        else:
+            persisted_key = submitted_key.strip()
+            if not persisted_key.startswith("AIza"):
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid API key format. Gemini API keys start with 'AIza'"
@@ -266,7 +278,7 @@ async def update_admin_config(
             "max_tokens": config.max_tokens,
             "top_p": config.top_p,
             "top_k": config.top_k,
-            "gemini_api_key": config.gemini_api_key,
+            "gemini_api_key": persisted_key,
             "use_mongodb": config.use_mongodb,
             "enable_voice": config.enable_voice,
             "enable_grammar": config.enable_grammar,
@@ -284,7 +296,12 @@ async def update_admin_config(
             upsert=True
         )
         
-        logger.info(f"Admin config updated: model={config.model_name}, has_api_key={bool(config.gemini_api_key)}")
+        active_key = get_active_api_key(persisted_key)
+        logger.info(
+            "Admin config updated: model=%s, has_api_key=%s",
+            config.effective_model_name(),
+            bool(active_key),
+        )
         
         return {
             "success": True,
@@ -296,7 +313,7 @@ async def update_admin_config(
                 "max_tokens": config.max_tokens,
                 "top_p": config.top_p,
                 "top_k": config.top_k,
-                "gemini_api_key": mask_api_key(config.gemini_api_key) if config.gemini_api_key else None,
+                "gemini_api_key": mask_api_key(active_key),
                 "use_mongodb": config.use_mongodb,
                 "enable_voice": config.enable_voice,
                 "enable_grammar": config.enable_grammar,

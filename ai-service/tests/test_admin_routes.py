@@ -121,6 +121,35 @@ async def test_put_config_valid_aiza_key_upserts_and_returns_success(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_put_config_masked_key_preserves_stored_secret(monkeypatch):
+    monkeypatch.setenv("AI_ADMIN_API_KEY", "test-admin-key")
+    stored_key = "AIzaStoredKey9876543210abc"
+    db = _mock_db({"_id": "ai_config", "gemini_api_key": stored_key})
+    app = _make_app()
+    app.dependency_overrides[
+        __import__("api.core.database", fromlist=["get_database"]).get_database
+    ] = lambda: db
+
+    payload = {
+        "model_name": "gemini-1.5-pro",
+        "gemini_api_key": mask_api_key(stored_key),
+    }
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.put(
+            "/admin/config",
+            json=payload,
+            headers={"X-Admin-Key": "test-admin-key"},
+        )
+
+    assert response.status_code == 200
+    update = db.admin_config.update_one.call_args.args[1]
+    assert update["$set"]["gemini_api_key"] == stored_key
+    assert response.json()["config"]["gemini_api_key"] == mask_api_key(stored_key)
+
+
+@pytest.mark.asyncio
 async def test_put_config_invalid_key_format_returns_400(monkeypatch):
     monkeypatch.setenv("AI_ADMIN_API_KEY", "test-admin-key")
 

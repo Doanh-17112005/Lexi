@@ -117,6 +117,7 @@ docs/cmd
 logs/*.txt
 temp/
 tmp/
+.tmp/
 *_log.txtsha256-*
 
 # agent skills (not needed in version control)

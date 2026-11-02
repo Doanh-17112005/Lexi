@@ -211,7 +211,10 @@ async def test_safe_get_live_fetch_real_site():
     except OSError:
         pytest.skip("no network access in this environment")
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await safe_get(client, "https://example.com/")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await safe_get(client, "https://example.com/")
+    except httpx.TransportError:
+        pytest.skip("outbound HTTPS is unavailable in this environment")
     assert response.status_code == 200
     assert b"Example Domain" in response.content

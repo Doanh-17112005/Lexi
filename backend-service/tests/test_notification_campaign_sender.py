@@ -151,6 +151,7 @@ async def test_push_data_includes_deep_link() -> None:
 
     assert len(captured_messages) == 1
     assert captured_messages[0].data["route"] == "/vocabulary"
+    assert captured_messages[0].fids == ["tok"]
 
 
 # ---------------------------------------------------------------------------

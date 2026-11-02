@@ -1,8 +1,10 @@
 """
 HuBERT Pronunciation Analysis Service
 
-Provides phoneme-level pronunciation analysis for English learners.
-Uses Facebook's HuBERT-large model fine-tuned for phoneme recognition.
+Provides pronunciation analysis for English learners.
+Uses Facebook's HuBERT-large ASR model and reports only confidence values the
+model actually produces; phoneme-category scores require an aligned phoneme
+model and are deliberately omitted.
 
 Features:
 - Lazy loading (only loads when first audio is analyzed)
@@ -259,13 +261,12 @@ class HuBERTService:
         # Average confidence across time
         avg_confidence = max_probs.mean().item()
         
-        # Return simplified scores for now
-        # In production, this would map to actual phonemes
-        return {
-            "overall_confidence": avg_confidence,
-            "consonants": avg_confidence * 0.95,  # Placeholder
-            "vowels": avg_confidence * 1.02,  # Placeholder
-        }
+        return self._confidence_scores(avg_confidence)
+
+    @staticmethod
+    def _confidence_scores(avg_confidence: float) -> Dict[str, float]:
+        """Expose measured model confidence without invented category scores."""
+        return {"overall_confidence": max(0.0, min(1.0, avg_confidence))}
     
     def _detect_errors(
         self,

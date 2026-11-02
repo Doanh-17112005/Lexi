@@ -38,10 +38,14 @@ async def test_list_tools():
             tools = await session.list_tools()
             tool_names = [t.name for t in tools.tools]
             
-            # Check that core tools are available
-            assert "chat_with_ai" in tool_names
-            assert "transcribe_audio" in tool_names
-            assert "evaluate_grammar" in tool_names
+            # This server is intentionally limited to coding-time IDE tools;
+            # app runtime AI/voice capabilities live in ai-service.
+            assert set(tool_names) == {
+                "manage_i18n_key",
+                "search_web",
+                "get_backend_schema",
+                "list_flutter_screens",
+            }
 
 
 @pytest.mark.asyncio
@@ -65,8 +69,8 @@ async def test_list_resources():
 
 
 @pytest.mark.asyncio
-async def test_chat_tool():
-    """Test chat tool execution"""
+async def test_flutter_screen_tool():
+    """Test a local IDE tool without an external AI provider."""
     server_params = StdioServerParameters(
         command=sys.executable,
         args=["server.py"],
@@ -77,11 +81,8 @@ async def test_chat_tool():
             await session.initialize()
             
             result = await session.call_tool(
-                "chat_with_ai",
-                {
-                    "message": "Hello!",
-                    "model": "qwen",
-                },
+                "list_flutter_screens",
+                {},
             )
             
             assert result.content
@@ -89,7 +90,9 @@ async def test_chat_tool():
             # Response should be JSON string
             import json
             response = json.loads(result.content[0].text)
-            assert "response" in response or "error" in response
+            assert (
+                "total_screens" in response and "by_feature" in response
+            ) or "error" in response
 
 
 if __name__ == "__main__":

@@ -56,7 +56,7 @@ async def send_campaign_push(
         message = messaging.MulticastMessage(
             notification=messaging.Notification(title=title, body=body),
             data=data,
-            tokens=chunk,
+            fids=chunk,
         )
         try:
             response = await run_in_threadpool(messaging.send_each_for_multicast, message)

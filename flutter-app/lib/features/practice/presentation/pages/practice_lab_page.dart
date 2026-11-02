@@ -1,9 +1,10 @@
 import 'package:easy_localization/easy_localization.dart';
 import '../../../ielts/presentation/pages/ielts_tests_page.dart';
 import 'package:flutter/material.dart';
+import 'package:lexilingo_app/core/di/service_locator.dart';
+import 'package:lexilingo_app/core/services/entitlement_service.dart';
 import 'package:lexilingo_app/core/theme/app_theme.dart';
 import 'package:lexilingo_app/core/widgets/premium_gate.dart';
-import 'package:lexilingo_app/core/services/purchases_service.dart';
 import 'package:lexilingo_app/features/level/presentation/providers/proficiency_provider.dart';
 import 'package:lexilingo_app/features/practice/presentation/widgets/practice_lab_models.dart';
 import 'package:lexilingo_app/features/practice/presentation/widgets/practice_lab_navigation.dart';
@@ -33,7 +34,9 @@ class _PracticeLabPageState extends State<PracticeLabPage> {
 
   Future<void> _loadPremiumStatus() async {
     try {
-      final isPremium = await PurchasesService.instance.isPremium;
+      final isPremium = sl.isRegistered<EntitlementService>()
+          ? await sl<EntitlementService>().fetchCached()
+          : false;
       if (!mounted || isPremium == _hasPremium) return;
       setState(() => _hasPremium = isPremium);
     } catch (_) {
@@ -580,7 +583,6 @@ class _SmallChip extends StatelessWidget {
   }
 }
 
-
 /// Entry point to the IELTS mock tests.
 ///
 /// Deliberately a card of its own rather than a `PracticeLabItem`: a mock test
@@ -595,9 +597,9 @@ class _IeltsEntryCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const IeltsTestsPage()),
-        ),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const IeltsTestsPage())),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(

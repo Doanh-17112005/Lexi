@@ -500,11 +500,21 @@ class SnapshotStorage:
 
     @staticmethod
     def _fsync_file(path: Path) -> None:
-        with path.open("rb") as handle:
+        # FlushFileBuffers (used by os.fsync on Windows) requires a writable
+        # handle. The file contents are not changed; rb+ only supplies the
+        # access mode needed by the platform API. POSIX keeps the same durable
+        # file flush semantics.
+        mode = "rb+" if os.name == "nt" else "rb"
+        with path.open(mode) as handle:
             os.fsync(handle.fileno())
 
     @staticmethod
     def _fsync_directory(path: Path) -> None:
+        # Windows does not allow opening directories with os.open and relies
+        # on the filesystem's rename/link guarantees. Linux production keeps
+        # the directory fsync that makes metadata publication crash-durable.
+        if os.name == "nt":
+            return
         descriptor = os.open(path, os.O_RDONLY)
         try:
             os.fsync(descriptor)

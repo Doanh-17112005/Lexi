@@ -40,7 +40,10 @@ class Role(Base):
 
     # Relationships
     permissions = relationship("RolePermission", back_populates="role", lazy="selectin")
-    users = relationship("User", back_populates="role", lazy="noload")
+    # These reverse collections are intentionally not loaded implicitly. Use
+    # an explicit query when needed; ``noload`` is deprecated in SQLAlchemy
+    # 2.1 and could incorrectly make an unloaded collection look empty.
+    users = relationship("User", back_populates="role", lazy="raise")
 
     def __repr__(self) -> str:
         return f"<Role {self.slug} (level={self.level})>"
@@ -69,7 +72,7 @@ class Permission(Base):
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    roles = relationship("RolePermission", back_populates="permission", lazy="noload")
+    roles = relationship("RolePermission", back_populates="permission", lazy="raise")
 
     __table_args__ = (
         Index("idx_permission_resource_action", "resource", "action", unique=True),

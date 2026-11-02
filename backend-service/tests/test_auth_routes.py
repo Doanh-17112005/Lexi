@@ -223,6 +223,43 @@ class TestRegister:
             )
         assert response.status_code == 201
 
+    async def test_register_issues_email_verify_purpose_token(self, client):
+        """Registration and verify-email must agree on the token purpose."""
+        create_token = MagicMock(return_value="opaque-test-token")
+        send_email = AsyncMock()
+
+        with (
+            patch(
+                "app.core.security.create_verification_token",
+                create_token,
+            ),
+            patch(
+                "app.routes.auth.EmailService.send_verification_email",
+                new=send_email,
+            ),
+        ):
+            response = await client.post(
+                f"{BASE}/register",
+                json={
+                    "email": "verify-purpose@example.com",
+                    "username": "verify_purpose",
+                    "password": "SecurePass123!",
+                },
+            )
+
+        assert response.status_code == 201
+        create_token.assert_called_once()
+        claims = create_token.call_args.args[0]
+        assert claims["purpose"] == "email_verify"
+        assert "type" not in claims
+        assert claims["email"] == "verify-purpose@example.com"
+        assert create_token.call_args.kwargs == {"expires_minutes": 1440}
+        send_email.assert_awaited_once_with(
+            to_email="verify-purpose@example.com",
+            token="opaque-test-token",
+            display_name="verify_purpose",
+        )
+
     async def test_register_success_response_has_email(self, client):
         """Successful register response includes submitted email."""
         with patch("app.routes.auth.EmailService.send_verification_email", new=AsyncMock()):

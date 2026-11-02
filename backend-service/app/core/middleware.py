@@ -3,25 +3,25 @@ Middleware for Rate Limiting, Error Handling, and Request Logging
 Phase 1 & 5: System Reliability & Security
 """
 
-import time
 import logging
-from typing import Callable, Dict, List, Optional
+import time
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.schemas.common import ErrorResponse, ErrorDetail, RequestMeta, ErrorCodes
 from app.core.logging_config import set_request_id
+from app.schemas.common import ErrorCodes, ErrorDetail, ErrorResponse
 
 logger = logging.getLogger(__name__)
 
 
 # ── Sensitive endpoints that get stricter per-route limits ──
 # Scale with global limit: production tight values / development relaxed for load testing
-def _build_strict_limits(is_dev: bool) -> Dict[str, int]:
+def _build_strict_limits(is_dev: bool) -> dict[str, int]:
     if is_dev:
         return {
             "/api/v1/auth/login": 300,          # relaxed — load testing from single IP
@@ -31,6 +31,7 @@ def _build_strict_limits(is_dev: bool) -> Dict[str, int]:
             "/api/v1/auth/admin/request-otp": 50,
             "/api/v1/auth/admin/verify-otp": 100,
             "/api/v1/proficiency/record-exercises": 120,
+            "/api/v1/admin/ai-content/generate-lesson": 30,
         }
     return {
         "/api/v1/auth/login": 10,           # 10 req/min — brute-force protection
@@ -42,11 +43,13 @@ def _build_strict_limits(is_dev: bool) -> Dict[str, int]:
         # Client-graded quiz results. A news quiz posts one batch and a book
         # quiz one result per answer, so a real learner stays far under this.
         "/api/v1/proficiency/record-exercises": 20,
+        "/api/v1/admin/ai-content/generate-lesson": 3,
     }
 
+_settings = None
 try:
     from app.core.config import settings as _settings
-    _STRICT_RATE_LIMITS: Dict[str, int] = _build_strict_limits(_settings.is_development)
+    _STRICT_RATE_LIMITS: dict[str, int] = _build_strict_limits(_settings.is_development)
 except Exception:
     _STRICT_RATE_LIMITS = _build_strict_limits(False)
 
@@ -67,6 +70,7 @@ _SENSITIVE_ROUTES_EXACT = {
     ("POST", "/api/v1/auth/admin/verify-otp"),
     ("POST", "/api/v1/xp/award"),
     ("POST", "/api/v1/challenges/daily/bonus/claim"),
+    ("POST", "/api/v1/admin/ai-content/generate-lesson"),
 }
 # Deliberately NOT sensitive: /api/v1/proficiency/record-exercises. It keeps a
 # strict per-minute limit above, but must not fail closed — abusing it only
@@ -121,8 +125,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.requests_per_hour = requests_per_hour
 
         # In-memory fallback storage (used only when Redis is unavailable)
-        self._mem_minute: Dict[str, List[datetime]] = defaultdict(list)
-        self._mem_hour: Dict[str, List[datetime]] = defaultdict(list)
+        self._mem_minute: dict[str, list[datetime]] = defaultdict(list)
+        self._mem_hour: dict[str, list[datetime]] = defaultdict(list)
 
     # ── helpers ──────────────────────────────────────────────
 
@@ -221,7 +225,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         Fallback in-memory rate limiting (single-instance only).
         Returns (allowed, minute_remaining, hour_remaining).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         one_min_ago = now - timedelta(minutes=1)
         one_hr_ago = now - timedelta(hours=1)
 
@@ -292,7 +296,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # multiple worker replicas effectively multiplies the intended limit.
         result = await self._check_redis(client_ip, path)
         if result is None:
-            if _is_sensitive_route(method, path):
+            if not getattr(_settings, "is_development", False) and _is_sensitive_route(method, path):
                 logger.error(
                     f"Distributed rate limiter unavailable for sensitive route "
                     f"{method} {path} — failing closed."
@@ -351,7 +355,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
     Global error handler middleware.
     Phase 5: Catch unhandled exceptions and return standardized error responses.
     """
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Catch and handle exceptions."""
         try:
@@ -359,14 +363,14 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             return response
         except Exception as exc:
             logger.exception(f"Unhandled exception: {exc}")
-            
+
             error_response = ErrorResponse(
                 error=ErrorDetail(
                     code=ErrorCodes.INTERNAL_ERROR,
                     message="An internal server error occurred",
                 )
             )
-            
+
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 content=error_response.model_dump(mode="json")
@@ -378,19 +382,19 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     Request/Response logging middleware.
     Phase 5: Observability and monitoring.
     """
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Log request and response details."""
-        
+
         # Start timer
         start_time = time.time()
-        
+
         # Log request
         logger.info(
             f"Request: {request.method} {request.url.path} "
             f"from {request.client.host if request.client else 'unknown'}"
         )
-        
+
         # Process request
         try:
             response = await call_next(request)
@@ -402,20 +406,20 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 f"Duration: {duration_ms:.2f}ms Error: {exc}"
             )
             raise
-        
+
         # Calculate duration
         duration_ms = (time.time() - start_time) * 1000
-        
+
         # Log response
         logger.info(
             f"Response: {request.method} {request.url.path} "
             f"Status: {response.status_code} "
             f"Duration: {duration_ms:.2f}ms"
         )
-        
+
         # Add timing header
         response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
-        
+
         return response
 
 
@@ -424,25 +428,25 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     Add unique request ID to each request.
     Phase 1: Essential for tracking and debugging.
     """
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Add request ID to request state."""
         import uuid
-        
+
         request_id = str(uuid.uuid4())
         request.state.request_id = request_id
         set_request_id(request_id)
 
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
-        
+
         return response
 
 
 class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
     """
     Handle Chrome's Private Network Access (CORS-RFC1918) for all requests.
-    
+
     Chrome 94+ requires Access-Control-Allow-Private-Network: true header
     on BOTH the OPTIONS preflight AND the actual request response.
     Without this header on the actual request, Chrome blocks it with 'Failed to fetch'.
@@ -453,13 +457,13 @@ class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
         has_pna_header = (
             request.headers.get("access-control-request-private-network") == "true"
         )
-        
+
         response = await call_next(request)
-        
+
         # Add PNA header to response if request had it (for both OPTIONS and actual requests)
         if has_pna_header or request.method == "OPTIONS":
             response.headers["Access-Control-Allow-Private-Network"] = "true"
-        
+
         return response
 
 

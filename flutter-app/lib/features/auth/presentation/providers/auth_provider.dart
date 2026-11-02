@@ -318,7 +318,7 @@ class AuthProvider extends ChangeNotifier {
 
       final result = await authRepository.requestPasswordReset(email);
 
-      return result.fold(
+      final success = result.fold<bool>(
         (failure) {
           _errorMessage = _getFailureMessage(failure);
           return false;
@@ -328,6 +328,7 @@ class AuthProvider extends ChangeNotifier {
           return true;
         },
       );
+      return success;
     } catch (e) {
       _errorMessage = _parseErrorMessage(e.toString());
       return false;
@@ -346,7 +347,7 @@ class AuthProvider extends ChangeNotifier {
 
       final result = await authRepository.resendVerificationEmail(email);
 
-      return result.fold(
+      final success = result.fold<bool>(
         (failure) {
           _errorMessage = _getFailureMessage(failure);
           return false;
@@ -356,6 +357,7 @@ class AuthProvider extends ChangeNotifier {
           return true;
         },
       );
+      return success;
     } catch (e) {
       _errorMessage = _parseErrorMessage(e.toString());
       return false;
@@ -380,7 +382,7 @@ class AuthProvider extends ChangeNotifier {
         newPassword: newPassword,
       );
 
-      return result.fold(
+      final success = result.fold<bool>(
         (failure) {
           _errorMessage = _getFailureMessage(failure);
           return false;
@@ -390,6 +392,7 @@ class AuthProvider extends ChangeNotifier {
           return true;
         },
       );
+      return success;
     } catch (e) {
       _errorMessage = _parseErrorMessage(e.toString());
       return false;

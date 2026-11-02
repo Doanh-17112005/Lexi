@@ -5,9 +5,31 @@ Provides shared fixtures for testing trace_cag nodes,
 services, and integrations.
 """
 
+from pathlib import Path
+from typing import Any, Dict
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any
+
+# The benchmark corpus and reporting package live under model-development/,
+# a documented 4.3 GB gitignored workspace. A normal clone must still be able
+# to run the service suite; benchmark tests are collected only when that
+# optional workspace has been provisioned.
+_TESTS_ROOT = Path(__file__).resolve().parent
+_MODEL_DEVELOPMENT = _TESTS_ROOT.parent / "model-development"
+collect_ignore: list[str] = []
+if not _MODEL_DEVELOPMENT.exists():
+    collect_ignore.append(str(_TESTS_ROOT / "benchmark"))
+    collect_ignore.extend(
+        str(_TESTS_ROOT / "trace_cag" / filename)
+        for filename in (
+            "test_benchmark_dashboard_figures.py",
+            "test_benchmark_figure_coordinator.py",
+            "test_benchmark_figures.py",
+            "test_daily_benchmark_runner.py",
+            "test_figure_summary_contract.py",
+        )
+    )
 
 
 # ============================================================

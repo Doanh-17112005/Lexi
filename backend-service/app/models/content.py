@@ -40,7 +40,9 @@ class GrammarItem(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    questions = relationship("QuestionItem", back_populates="grammar", lazy="noload")
+    # Callers must opt in to loading the collection. ``noload`` is deprecated
+    # and can silently report an unloaded relationship as an empty list.
+    questions = relationship("QuestionItem", back_populates="grammar", lazy="raise")
 
     __table_args__ = (
         Index("ix_grammar_items_level", "level"),

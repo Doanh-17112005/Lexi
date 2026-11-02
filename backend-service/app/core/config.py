@@ -345,6 +345,9 @@ class Settings(BaseSettings):
         return self.CELERY_RESULT_BACKEND or self.REDIS_URL
 
     # ── External API Keys (Phase 0+ Content Features) ──
+    GEMINI_API_KEY: str | None = None  # Google Gemini API (AI Content Studio)
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    AI_CONTENT_STUDIO_TIMEOUT_SECONDS: float = 60.0
     YOUTUBE_API_KEY: str | None = None  # YouTube Data API v3
     YOUTUBE_TRANSCRIPT_PROXY_URL: str | None = None
     NEWSAPI_KEY: str | None = None  # NewsAPI.org

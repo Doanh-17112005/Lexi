@@ -20,11 +20,23 @@ from api.models.schemas import (
 )
 from api.models.v3_schemas import TutorResponseV3
 from api.models.ai_repository import AIRepository
-from api.services.trace_cag import get_trace_cag
-from api.services.v3_pipeline import get_v3_pipeline
 from api.routes.admin import verify_admin_api_key
 
 router = APIRouter()
+
+
+async def get_trace_cag():
+    """Load the heavy TRACE-CAG stack only when its endpoint is called."""
+    from api.services.trace_cag import get_trace_cag as load_trace_cag
+
+    return await load_trace_cag()
+
+
+async def get_v3_pipeline():
+    """Load the legacy KG stack only when its endpoint is called."""
+    from api.services.v3_pipeline import get_v3_pipeline as load_v3_pipeline
+
+    return await load_v3_pipeline()
 
 
 # ============================================================

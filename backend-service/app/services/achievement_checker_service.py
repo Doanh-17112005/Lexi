@@ -6,20 +6,33 @@ This service checks achievement conditions and automatically unlocks badges
 when conditions are met. It's designed to be called after specific user actions.
 """
 
-from typing import List, Optional, Dict, Any
-from uuid import UUID
-from datetime import datetime, timezone
 import logging
-from sqlalchemy import select, func, and_
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.gamification import Achievement, UserAchievement, ChallengeRewardClaim
-from app.models.progress import UserCourseProgress, LessonCompletion, Streak, DailyActivity
-from app.models.vocabulary import UserVocabulary, VocabularyStatus
-from app.models.user import User
+from app.models.course import Course, Lesson
+from app.models.course_category import CourseCategory
 from app.models.games import GameSession
+from app.models.gamification import (
+    Achievement,
+    ChallengeRewardClaim,
+    UserAchievement,
+    UserFollowing,
+)
+from app.models.progress import (
+    LessonCompletion,
+    Streak,
+    UserCourseProgress,
+    UserProgress,
+)
 from app.models.proficiency import SkillDailyStat, SkillType
+from app.models.user import User
+from app.models.vocabulary import UserVocabulary, VocabularyStatus
 
 logger = logging.getLogger(__name__)
 
@@ -313,24 +326,114 @@ class AchievementCheckerService:
             )
             stats["numeric_level"] = result.scalar() or 0
 
-        # Fetch time-based study stats from DailyActivity
+        # Fetch time-based study stats. UserProgress is the authoritative
+        # source for elapsed lesson time; zero means the legacy client did not
+        # report a duration and must not count as an instant completion.
         if need_time:
             stats["night_study_sessions"] = 0  # Placeholder: needs hour tracking
             stats["morning_study_sessions"] = 0  # Placeholder: needs hour tracking
-            stats["speed_lessons"] = 0  # Placeholder: needs lesson duration tracking
+            result = await self.db.execute(
+                select(func.count(UserProgress.id)).where(
+                    and_(
+                        UserProgress.user_id == user_id,
+                        UserProgress.status == "completed",
+                        UserProgress.time_spent_seconds > 0,
+                        UserProgress.time_spent_seconds <= 300,
+                    )
+                )
+            )
+            stats["speed_lessons"] = result.scalar() or 0
 
-        # Fetch skill-based stats (grammar, culture, writing, listening)
+        # Fetch skill-based lesson completions from durable pass records.
+        # Prefer the lesson-level CEFR skill and fall back to the course-level
+        # label. Culture is a course category rather than a CEFR skill, so it
+        # is counted from its canonical category slug.
         if need_skills:
-            # These are placeholders — actual implementation needs
-            # tagged lesson categories in the database
-            stats["grammar_mastered"] = 0
-            stats["culture_lessons"] = 0
-            stats["writing_completed"] = 0
-            stats["listening_completed"] = 0
+            effective_skill = func.lower(
+                func.coalesce(Lesson.skill, Course.skill, "")
+            )
+            category_slug = func.lower(func.coalesce(CourseCategory.slug, ""))
+
+            result = await self.db.execute(
+                select(
+                    func.count(
+                        func.distinct(
+                            case(
+                                (
+                                    or_(
+                                        effective_skill == "grammar",
+                                        category_slug == "grammar",
+                                    ),
+                                    LessonCompletion.lesson_id,
+                                )
+                            )
+                        )
+                    ),
+                    func.count(
+                        func.distinct(
+                            case(
+                                (
+                                    category_slug == "cultural-english",
+                                    LessonCompletion.lesson_id,
+                                )
+                            )
+                        )
+                    ),
+                    func.count(
+                        func.distinct(
+                            case(
+                                (
+                                    or_(
+                                        effective_skill == "writing",
+                                        category_slug == "writing",
+                                    ),
+                                    LessonCompletion.lesson_id,
+                                )
+                            )
+                        )
+                    ),
+                    func.count(
+                        func.distinct(
+                            case(
+                                (
+                                    or_(
+                                        effective_skill == "listening",
+                                        category_slug == "listening",
+                                    ),
+                                    LessonCompletion.lesson_id,
+                                )
+                            )
+                        )
+                    ),
+                )
+                .select_from(LessonCompletion)
+                .join(Lesson, Lesson.id == LessonCompletion.lesson_id)
+                .join(Course, Course.id == Lesson.course_id)
+                .outerjoin(CourseCategory, CourseCategory.id == Course.category_id)
+                .where(
+                    and_(
+                        LessonCompletion.user_id == user_id,
+                        LessonCompletion.is_passed.is_(True),
+                    )
+                )
+            )
+            grammar, culture, writing, listening = result.one()
+            stats["grammar_mastered"] = int(grammar or 0)
+            stats["culture_lessons"] = int(culture or 0)
+            stats["writing_completed"] = int(writing or 0)
+            stats["listening_completed"] = int(listening or 0)
 
         # Fetch social stats
         if need_social:
-            stats["social_interactions"] = 0  # Placeholder
+            # A follow is currently the only durable social action recorded by
+            # the backend. Count actions initiated by the learner, rather than
+            # followers received, so the badge reflects their own activity.
+            result = await self.db.execute(
+                select(func.count(UserFollowing.id)).where(
+                    UserFollowing.follower_id == user_id
+                )
+            )
+            stats["social_interactions"] = result.scalar() or 0
             stats["chats_completed"] = 0  # Placeholder
             stats["help_others_count"] = 0  # Placeholder
 

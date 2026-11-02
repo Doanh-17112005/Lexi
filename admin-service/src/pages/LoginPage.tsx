@@ -3,16 +3,52 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../components/AuthProvider";
 import { ENV } from "../lib/env";
 import { useI18n } from "../lib/i18n";
-import GlobeBackground from "../components/login-globe/GlobeBackground";
+
+const GlobeBackground = React.lazy(
+  () => import("../components/login-globe/GlobeBackground")
+);
 
 export const LoginPage = () => {
-  const { signInWithGoogle, loading } = useAuth();
+  const { signInWithGoogle, signIn, loading } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const isGsiInitialized = useRef(false);
   const [gsiReady, setGsiReady] = useState(false);
+  const [showGlobe, setShowGlobe] = useState(false);
   const { t } = useI18n();
+
+  useEffect(() => {
+    // Keep authentication interactive on small/low-motion devices and defer
+    // the large Three.js chunk until after the form has rendered.
+    if (
+      window.matchMedia("(max-width: 767px)").matches ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setShowGlobe(true), 250);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const handlePasswordLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const role = await signIn(email, password);
+      navigate(role === "super_admin" ? "/super" : "/admin", { replace: true });
+    } catch (err: any) {
+      const msg = err?.message || "";
+      setError(msg || t.login.loginFailed || "Đăng nhập thất bại");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleGoogleCallback = useCallback(
     async (response: any) => {
@@ -37,7 +73,7 @@ export const LoginPage = () => {
   useEffect(() => {
     const clientId = ENV.googleClientId;
     if (!clientId) {
-      setError(t.login.missingClientId);
+      // Trong môi trường dev khi chưa có Google Client ID, bỏ qua GSI
       return;
     }
 
@@ -95,7 +131,11 @@ export const LoginPage = () => {
   return (
     <div className="login-page">
       {/* 3D Globe background */}
-      <GlobeBackground />
+      {showGlobe && (
+        <React.Suspense fallback={null}>
+          <GlobeBackground />
+        </React.Suspense>
+      )}
 
       {/* Animated gradient orbs */}
       <div className="login-orb login-orb-1" />
@@ -269,23 +309,110 @@ export const LoginPage = () => {
         <div className="login-body">
           <h1 className="login-title">{t.login.welcome}</h1>
           <p className="login-subtitle">
-            {t.login.loginWithGoogle}
+            {ENV.googleClientId ? t.login.loginWithGoogle : "Đăng nhập tài khoản Quản trị viên"}
           </p>
 
-          {/* Google Sign-In button rendered by GSI */}
-          <div className="google-signin-area">
-            {loading ? (
-              <div className="login-loading">
-                <span className="login-spinner" />
-                <span>{t.login.authenticating}</span>
-              </div>
-            ) : (
-              <div ref={googleBtnRef} className="google-btn-container" />
-            )}
-          </div>
+          {/* Google Sign-In button rendered by GSI (khi có Google Client ID) */}
+          {ENV.googleClientId && (
+            <div className="google-signin-area">
+              {loading ? (
+                <div className="login-loading">
+                  <span className="login-spinner" />
+                  <span>{t.login.authenticating}</span>
+                </div>
+              ) : (
+                <div ref={googleBtnRef} className="google-btn-container" />
+              )}
+            </div>
+          )}
+
+          {/* Form đăng nhập Email & Password */}
+          <form onSubmit={handlePasswordLogin} style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "14px" }}>
+            <div>
+              <label style={{ fontSize: "12px", fontWeight: 500, color: "rgba(255,255,255,0.7)", marginBottom: "5px", display: "block" }}>
+                Email Quản trị
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="admin@example.com"
+                autoComplete="username"
+                required
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: "10px",
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  color: "#FFFFFF",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                  outline: "none",
+                  transition: "border 0.2s"
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: "12px", fontWeight: 500, color: "rgba(255,255,255,0.7)", marginBottom: "5px", display: "block" }}>
+                Mật khẩu
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                required
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: "10px",
+                  background: "rgba(255,255,255,0.06)",
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  color: "#FFFFFF",
+                  fontSize: "14px",
+                  boxSizing: "border-box",
+                  outline: "none",
+                  transition: "border 0.2s"
+                }}
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting || loading}
+              style={{
+                width: "100%",
+                padding: "12px",
+                marginTop: "4px",
+                borderRadius: "12px",
+                background: "linear-gradient(135deg, #ff4d00 0%, #ff7a00 100%)",
+                border: "none",
+                color: "#FFFFFF",
+                fontWeight: 600,
+                fontSize: "14px",
+                cursor: "pointer",
+                boxShadow: "0 4px 18px rgba(255, 77, 0, 0.45)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px"
+              }}
+            >
+              {submitting || loading ? (
+                <>
+                  <span className="login-spinner" style={{ width: 16, height: 16 }} />
+                  <span>Đang đăng nhập...</span>
+                </>
+              ) : (
+                <span>Đăng nhập Super Admin</span>
+              )}
+            </button>
+          </form>
 
           {error && (
-            <div className="login-error">
+            <div className="login-error" style={{ marginTop: "14px" }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <line x1="15" y1="9" x2="9" y2="15" />
