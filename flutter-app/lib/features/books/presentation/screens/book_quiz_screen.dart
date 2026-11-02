@@ -87,6 +87,44 @@ class _BookQuizScreenState extends State<BookQuizScreen> {
             return _buildResultScreen(context, provider, isDark);
           }
 
+          if (provider.error != null && provider.currentQuiz == null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.menu_book_rounded,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'books.quizNotAvailable'.tr(),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      provider.error!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: isDark ? Colors.white54 : AppColors.textGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () => provider.loadChapterQuiz(widget.chapter),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text('common.retry'.tr()),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
           final quiz = provider.currentQuiz;
           if (quiz == null || quiz.questions.isEmpty) {
             return Center(
@@ -293,7 +331,9 @@ class _BookQuizScreenState extends State<BookQuizScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'books.quizScore'.tr(namedArgs: {'score': '$score', 'total': '$total'}),
+              'books.quizScore'.tr(
+                namedArgs: {'score': '$score', 'total': '$total'},
+              ),
               style: TextStyle(
                 fontSize: 16,
                 color: isDark ? Colors.white60 : AppColors.textGrey,

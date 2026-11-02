@@ -154,69 +154,70 @@ def _generate_contextual_book_quiz(
     cefr_level: Optional[str] = None,
     chapter_text: Optional[str] = None,
 ) -> dict:
-    """Build a stable chapter quiz from available reader context."""
-    title = _display_book_title(book_id, book_title)
+    """Build objective cloze questions from text the reader actually opened."""
     context = _clean_quiz_context(chapter_text)
+    if len(context) < 40:
+        raise ValueError("A real chapter excerpt is required to build this quiz")
     sentences = _split_quiz_sentences(context)
-    theme = _infer_quiz_theme(f"{title} {context}")
-    detail = (
-        sentences[0]
-        if sentences
-        else f"Chapter {chapter} of {title} introduces events that shape the learner's understanding of the story."
-    )
-    detail_option = detail if len(detail) <= 150 else f"{detail[:147]}..."
-    vocab_word = _select_learning_word(context, fallback="conflict")
-    level = (cefr_level or "B1").upper()
-    source = "chapter_excerpt" if context else "book_metadata"
+    if not sentences:
+        sentences = [context[:220]]
+
+    questions = []
+    for index in range(3):
+        sentence = sentences[index % len(sentences)]
+        candidates = [
+            word for word in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", sentence)
+            if word.lower() not in _QUIZ_COMMON_WORDS
+        ]
+        if not candidates:
+            candidates = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", sentence)
+        if not candidates:
+            raise ValueError("The chapter excerpt has no usable English words")
+        answer = candidates[index % len(candidates)]
+        masked_sentence = re.sub(
+            rf"\b{re.escape(answer)}\b",
+            "_____",
+            sentence,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        context_words = {word.lower() for word in re.findall(r"[A-Za-z'-]+", context)}
+        decoys = [
+            word for word in _VOCAB_DECOYS
+            if word.lower() != answer.lower() and word.lower() not in context_words
+        ][:3]
+        fallback_decoys = ["simple", "modern", "silent", "bright", "narrow"]
+        for decoy in fallback_decoys:
+            if len(decoys) == 3:
+                break
+            if decoy.lower() != answer.lower() and decoy.lower() not in context_words:
+                decoys.append(decoy)
+        options = [answer, *decoys]
+        shift = index % len(options)
+        options = options[shift:] + options[:shift]
+        correct_index = options.index(answer)
+        questions.append({
+            "id": f"{book_id}_ch{chapter}_text_{index + 1}",
+            "question": (
+                "Complete the exact sentence from the chapter excerpt: "
+                f"“{masked_sentence}”"
+            ),
+            "options": options,
+            "correct_index": correct_index,
+            "explanation": (
+                f"The source excerpt says: “{sentence}” The missing word is "
+                f"'{answer}'. The other choices do not occur in this position "
+                "in the text, so they cannot reproduce the original sentence."
+            ),
+        })
 
     return {
-        "questions": [
-            {
-                "id": f"{book_id}_ch{chapter}_main_idea",
-                "question": f"What should a reader focus on most in chapter {chapter} of {title}?",
-                "options": [
-                    f"How the chapter develops {theme}",
-                    "Only the exact year when the book was published",
-                    "The cover design and page layout",
-                    "A list of unrelated facts about the author",
-                ],
-                "correct_index": 0,
-                "explanation": (
-                    f"The strongest reading focus is how this chapter develops {theme}, "
-                    "because that helps connect details to meaning."
-                ),
-            },
-            {
-                "id": f"{book_id}_ch{chapter}_vocabulary",
-                "question": f"Which word from this chapter is a useful {level} vocabulary focus?",
-                "options": _vocab_options(vocab_word),
-                "correct_index": 0,
-                "explanation": (
-                    f"'{vocab_word}' is selected from the available chapter context "
-                    "as a useful word to notice and review."
-                ),
-            },
-            {
-                "id": f"{book_id}_ch{chapter}_evidence",
-                "question": "Which detail best supports your understanding of this chapter?",
-                "options": [
-                    detail_option,
-                    "The reader can ignore all character choices in the chapter.",
-                    "The chapter is only useful for counting paragraph numbers.",
-                    "The title alone explains every important event.",
-                ],
-                "correct_index": 0,
-                "explanation": (
-                    "Good comprehension answers point back to specific evidence "
-                    "from the chapter or the book metadata."
-                ),
-            },
-        ],
+        "questions": questions,
         "xp_reward": 25,
         "is_stub": False,
-        "generator": "lexilingo-contextual-quiz-v1",
-        "source": source,
-        "skills": ["main_idea", "vocabulary", "text_evidence"],
+        "generator": "lexilingo-excerpt-cloze-v2",
+        "source": "chapter_excerpt",
+        "skills": ["close_reading", "vocabulary", "text_evidence"],
     }
 
 # ── Curated English-Learning Books by CEFR Level (4 per level) ───
@@ -936,12 +937,17 @@ async def get_book_quiz(
     Results are cached permanently per (book_id, chapter) pair.
     """
     context = _clean_quiz_context(chapter_text)
+    if len(context) < 40:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Read the chapter first so the quiz can use a real excerpt.",
+        )
     context_parts = [book_title or "", cefr_level or "", context]
     if any(part.strip() for part in context_parts):
         fingerprint = hashlib.sha1("|".join(context_parts).encode("utf-8")).hexdigest()[:12]
-        cache_key = f"books:quiz:{book_id}:ch:{chapter}:ctx:{fingerprint}"
+        cache_key = f"books:quiz:v2:{book_id}:ch:{chapter}:ctx:{fingerprint}"
     else:
-        cache_key = f"books:quiz:{book_id}:ch:{chapter}"
+        cache_key = f"books:quiz:v2:{book_id}:ch:{chapter}"
     cache_service = APICacheService(db)
 
     async def _generate_quiz() -> dict:
@@ -959,7 +965,8 @@ async def get_book_quiz(
             api_name="books_quiz",
             fetch_fn=_generate_quiz,
             priority=Priority.LOW,
-            redis_ttl=0,        # Not in Redis hot cache
+            cost=0,
+            redis_ttl=86400,    # Stable for a given excerpt fingerprint
             db_ttl=315360000,   # ~10 years (permanent)
         )
 

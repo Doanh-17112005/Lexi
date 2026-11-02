@@ -122,8 +122,10 @@ foreach ($required in @("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB")) {
 $backendPath = Join-Path $repoRoot "backend-service\.env"
 $aiPath = Join-Path $repoRoot "ai-service\.env"
 $adminPath = Join-Path $repoRoot "admin-service\.env.local"
+$flutterDevConfigPath = Join-Path $repoRoot "flutter-app\assets\env\dev_config"
 $backendCurrent = Get-EnvMap $backendPath
 $aiCurrent = Get-EnvMap $aiPath
+$flutterDevConfig = Get-EnvMap $flutterDevConfigPath
 
 $databaseUser = [Uri]::EscapeDataString([string]$postgres.POSTGRES_USER)
 $databasePassword = [Uri]::EscapeDataString([string]$postgres.POSTGRES_PASSWORD)
@@ -152,6 +154,10 @@ Set-EnvValues $backendPath @{
     SECRET_KEY = $jwtSecret
     AI_ADMIN_API_KEY = $internalAiKey
     GEMINI_API_KEY = $backendGemini
+    FIREBASE_PROJECT_ID = "lexilingo-88492"
+    GOOGLE_CLIENT_ID = [string]$flutterDevConfig.GOOGLE_SERVER_CLIENT_ID
+    DEV_AUTO_VERIFY_EMAIL = "true"
+    EMAIL_VERIFICATION_URL_BASE = "http://localhost:5174/#/verify-email"
     PORT = "8000"
 }
 

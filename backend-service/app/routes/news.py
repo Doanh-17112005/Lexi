@@ -9,17 +9,24 @@ Phase 2: News Reading Feature.
 
 import logging
 import hashlib
+import html
 import re
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 from typing import Optional
 
 import httpx
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status, Response, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.safe_http import safe_get as _safe_get, safe_stream_get as _safe_stream_get
+from app.core.safe_http import (
+    safe_get as _safe_get,
+    safe_stream_get as _safe_stream_get,
+    validate_public_url as _validate_safe_public_url,
+)
 from app.services.api_cache_service import (
     APICacheService,
     QuotaExhaustedError,
@@ -33,14 +40,16 @@ router = APIRouter(prefix="/news", tags=["News"])
 
 NEWSAPI_BASE = "https://newsapi.org/v2"
 NEWSDATA_BASE = "https://newsdata.io/api/1"
-_PRIVATE_HOST_PREFIXES = (
-    "localhost", "127.", "0.0.0.0", "10.", "192.168.", "172.16.",
-    "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
-    "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
-    "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-    "169.254.", "fc00", "fd", "fe80",
-)
-
+PUBLIC_NEWS_RSS = {
+    "general": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "technology": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    "science": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+    "health": "https://feeds.bbci.co.uk/news/health/rss.xml",
+    "business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    "entertainment": "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
+    "sports": "https://feeds.bbci.co.uk/sport/rss.xml?edition=uk",
+    "education": "https://feeds.bbci.co.uk/news/education/rss.xml",
+}
 # ── CEFR Level Definitions ──────────────────────────────────────
 CEFR_LEVELS = {
     "A1": {"label": "Beginner", "color": "#4CAF50", "max_words": 120},
@@ -301,42 +310,13 @@ async def _scrape_full_article(url: str) -> dict:
 
 
 def _validate_public_http_url(url: str) -> None:
-    """Reject non-public URLs before server-side fetches."""
-    try:
-        parsed_url = urlparse(url)
-        if parsed_url.scheme not in ("http", "https") or not parsed_url.hostname:
-            raise ValueError
-        host = parsed_url.hostname.lower()
-        if any(host == prefix or host.startswith(prefix) for prefix in _PRIVATE_HOST_PREFIXES):
-            raise ValueError
+    """Reject malformed/private URL syntax before the pinned network fetch.
 
-        from ipaddress import ip_address
-        import socket
-
-        try:
-            resolved_ips = {
-                result[4][0]
-                for result in socket.getaddrinfo(
-                    host, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-                )
-            }
-        except socket.gaierror:
-            return
-        for resolved_ip in resolved_ips:
-            parsed_ip = ip_address(resolved_ip)
-            if (
-                parsed_ip.is_private
-                or parsed_ip.is_loopback
-                or parsed_ip.is_link_local
-            ):
-                raise ValueError
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only public HTTP/HTTPS URLs are allowed.",
-        ) from exc
+    DNS resolution is intentionally performed only by ``safe_http`` at the
+    connection step.  Resolving here as well creates a check/use mismatch and
+    can incorrectly reject a public CDN host with several addresses.
+    """
+    _validate_safe_public_url(url)
 
 
 async def _get_public_url(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
@@ -381,30 +361,43 @@ def _strip_html_basic(html: str) -> str:
 # Article Quiz
 # ============================================================================
 
-@router.get("/{article_id}/quiz")
+@router.post("/{article_id}/quiz")
 async def get_article_quiz(
     article_id: str,
+    article: dict = Body(..., description="Real article context used to build the quiz"),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Get AI-generated comprehension quiz for a news article.
+    Get a deterministic comprehension quiz grounded in the supplied article.
     
     Generates 5 questions:
     - 2 comprehension (main idea, detail)
     - 2 vocabulary (word meaning in context)
     - 1 grammar (sentence structure)
     
-    Cache: permanent (article content doesn't change).
+    The client must send the real title/description/content it displayed.  We
+    intentionally reject an ID-only request instead of inventing context.
     """
-    cache_key = f"news:quiz:v2:{article_id}"
+    quiz_article = _validated_quiz_article(article)
+    context_hash = hashlib.sha256(
+        (
+            quiz_article["title"]
+            + "\n"
+            + quiz_article["description"]
+            + "\n"
+            + quiz_article["content"]
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    cache_key = f"news:quiz:v3:{article_id}:{context_hash}"
     cache_service = APICacheService(db)
     
     try:
         result = await cache_service.get_or_fetch(
             cache_key=cache_key,
-            api_name="newsapi",  # Minimal cost — uses cached article text
-            fetch_fn=lambda: _generate_quiz(article_id),
+            api_name="newsapi",
+            fetch_fn=lambda: _generate_quiz(article_id, quiz_article),
             priority=Priority.LOW,
+            cost=0,
             redis_ttl=604800,       # 7 days
             db_ttl=31536000,        # 1 year (permanent)
         )
@@ -420,6 +413,38 @@ async def get_article_quiz(
         )
 
 
+def _validated_quiz_article(article: dict) -> dict[str, str]:
+    """Bound and validate client-supplied article text before quiz generation."""
+    title = str(article.get("title") or "").strip()[:300]
+    description = _strip_html_basic(
+        str(article.get("description") or "")[:5000]
+    )
+    content = _strip_html_basic(str(article.get("content") or "")[:20000])
+    source_text = " ".join(part for part in (description, content) if part)
+
+    if not title or len(source_text) < 80:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "The real article text is unavailable or too short for a reliable quiz. "
+                "Open the article and load its full content before trying again."
+            ),
+        )
+
+    sentences = _split_quiz_sentences(source_text)
+    if len(sentences) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least two complete source sentences are required for a reliable quiz.",
+        )
+
+    return {
+        "title": title,
+        "description": description,
+        "content": content,
+    }
+
+
 # ============================================================================
 # Internal Functions
 # ============================================================================
@@ -431,7 +456,7 @@ async def _fetch_news(
     query: Optional[str] = None,
 ) -> dict:
     """
-    Fetch news from NewsAPI.org (primary) with NewsData.io fallback.
+    Fetch news from NewsAPI.org, NewsData.io, then a public BBC RSS feed.
     
     Returns normalized article list.
     """
@@ -447,12 +472,98 @@ async def _fetch_news(
         try:
             return await _fetch_from_newsdata(category, page, page_size, query)
         except Exception as e:
-            logger.error(f"NewsData.io also failed: {e}")
-    
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="No news API keys configured or all providers failed.",
-    )
+            logger.warning(f"NewsData.io failed, trying public RSS: {e}")
+
+    # Public RSS is a real, attributable source and does not need a paid key.
+    # It is deliberately last so configured providers retain their pagination.
+    try:
+        return await _fetch_from_public_rss(category, page, page_size, query)
+    except Exception as e:
+        logger.error(f"Public news RSS failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="News sources are temporarily unavailable.",
+        ) from e
+
+
+def _rss_text(item: ET.Element, tag: str) -> str:
+    node = item.find(tag)
+    return (node.text or "").strip() if node is not None else ""
+
+
+def _rss_published_at(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        return parsedate_to_datetime(value).isoformat()
+    except (TypeError, ValueError):
+        return value
+
+
+async def _fetch_from_public_rss(
+    category: str,
+    page: int,
+    page_size: int,
+    query: Optional[str],
+) -> dict:
+    """Read normalized articles from BBC's public RSS feeds.
+
+    RSS only exposes publisher-provided title/summary/link metadata. Full text is
+    fetched later by the existing full-content endpoint, so no article text is
+    invented or mislabeled as publisher content.
+    """
+    feed_url = PUBLIC_NEWS_RSS.get(category, PUBLIC_NEWS_RSS["general"])
+    async with httpx.AsyncClient(
+        timeout=15.0,
+        headers={"User-Agent": "LexiLingo/1.0 (English learning app)"},
+        follow_redirects=True,
+    ) as client:
+        response = await client.get(feed_url)
+        response.raise_for_status()
+
+    root = ET.fromstring(response.content)
+    normalized = []
+    query_lower = (query or "").strip().lower()
+    media_ns = "{http://search.yahoo.com/mrss/}"
+
+    for item in root.findall(".//item"):
+        title = html.unescape(_rss_text(item, "title"))
+        description = html.unescape(
+            re.sub(r"<[^>]+>", " ", _rss_text(item, "description"))
+        )
+        description = re.sub(r"\s+", " ", description).strip()
+        link = _rss_text(item, "link") or _rss_text(item, "guid")
+        if not title or not link:
+            continue
+        if query_lower and query_lower not in f"{title} {description}".lower():
+            continue
+
+        thumbnail = item.find(f"{media_ns}thumbnail")
+        image_url = thumbnail.get("url", "") if thumbnail is not None else ""
+        if not image_url:
+            enclosure = item.find("enclosure")
+            if enclosure is not None and enclosure.get("type", "").startswith("image/"):
+                image_url = enclosure.get("url", "")
+
+        normalized.append({
+            "id": hashlib.md5(f"{link}{title}".encode()).hexdigest()[:12],
+            "title": title,
+            "description": description,
+            "content": description,
+            "url": link,
+            "image_url": image_url,
+            "source_name": "BBC News",
+            "author": "BBC News",
+            "published_at": _rss_published_at(_rss_text(item, "pubDate")),
+            "category": category,
+            "provider": "bbc_rss",
+        })
+
+    start = (page - 1) * page_size
+    return {
+        "articles": normalized[start:start + page_size],
+        "total_results": len(normalized),
+    }
 
 
 async def _fetch_from_newsapi(
@@ -654,42 +765,46 @@ async def _generate_quiz(article_id: str, article: dict | None = None) -> dict:
     service is unavailable. A future AI-backed generator can replace this
     helper as long as it preserves the response contract below.
     """
-    article = article or {}
+    if not article:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Real article context is required to generate a quiz.",
+        )
     context = _build_quiz_context(article_id, article)
     topic = context["topic"]
     sentences = context["sentences"]
-    highlight_words = context["highlight_words"]
+    keywords = context["highlight_words"]
 
     main_sentence = sentences[0]
-    detail_sentence = sentences[1] if len(sentences) > 1 else main_sentence
+    detail_sentence = sentences[1]
     support_sentence = sentences[2] if len(sentences) > 2 else detail_sentence
-
-    first_word = highlight_words[0] if highlight_words else _topic_keyword(topic)
-    second_word = (
-        highlight_words[1]
-        if len(highlight_words) > 1
-        else _topic_keyword(detail_sentence)
+    first_word, first_word_sentence = _keyword_in_source(sentences, keywords, 0)
+    second_word, second_word_sentence = _keyword_in_source(
+        sentences,
+        [word for word in keywords if word.lower() != first_word.lower()],
+        1,
     )
-    if second_word == first_word:
-        second_word = _topic_keyword(support_sentence)
+    all_distractors = _extract_quiz_keywords(" ".join(sentences), topic)
 
     return {
         "questions": [
             {
                 "id": 1,
                 "type": "comprehension",
-                "question": f"What is the main idea of the article about {topic}?",
+                "question": "Which statement is explicitly supported by the article?",
                 "options": _unique_options(
                     [
                         _shorten(main_sentence, 110),
-                        f"The article mainly lists unrelated facts about {topic}.",
-                        "The article is mostly a personal travel diary.",
-                        "The article explains a fictional story with no real-world details.",
+                        f"The article gives no information about {topic}.",
+                        "The article says that every event described is fictional.",
+                        "The article replaces its subject with an unrelated travel diary.",
                     ]
                 ),
                 "correct_index": 0,
                 "explanation": (
-                    "The first key sentence gives the clearest summary of the article's focus."
+                    f"The correct answer reproduces this source sentence: “{_shorten(main_sentence, 180)}” "
+                    "The other choices add claims that do not appear in the source, so they "
+                    "cannot be supported by the article."
                 ),
             },
             {
@@ -706,41 +821,39 @@ async def _generate_quiz(article_id: str, article: dict | None = None) -> dict:
                 ),
                 "correct_index": 1,
                 "explanation": (
-                    "This option repeats a concrete detail from the article text."
+                    f"The correct answer comes directly from the source: “{_shorten(detail_sentence, 180)}” "
+                    "The other options either remove the article's context or introduce actions "
+                    "that the source never states."
                 ),
             },
             {
                 "id": 3,
                 "type": "vocabulary",
-                "question": f"What does '{first_word}' most closely relate to in this article?",
-                "options": _unique_options(
-                    [
-                        "A person who is not connected to the article",
-                        "A time expression used only for dates",
-                        _vocabulary_definition(first_word, topic),
-                        "A number used to rank sports teams",
-                    ]
+                "question": (
+                    "Which word from the article exactly completes this sentence?\n"
+                    f"{_cloze_source_sentence(first_word_sentence, first_word)}"
                 ),
+                "options": _cloze_options(first_word, all_distractors, 2),
                 "correct_index": 2,
                 "explanation": (
-                    f"In this context, '{first_word}' is connected to the article's main topic."
+                    f"The source sentence reads: “{_shorten(first_word_sentence, 180)}” "
+                    f"Therefore “{first_word}” is the exact contextual answer. The other words "
+                    "are not used in this position in the article, even if they occur elsewhere."
                 ),
             },
             {
                 "id": 4,
                 "type": "vocabulary",
-                "question": f"Which phrase best matches '{second_word}' in context?",
-                "options": _unique_options(
-                    [
-                        _vocabulary_definition(second_word, topic),
-                        "A completely separate topic",
-                        "A decorative detail with no meaning",
-                        "A command to stop reading",
-                    ]
+                "question": (
+                    "Which word from the article exactly completes this sentence?\n"
+                    f"{_cloze_source_sentence(second_word_sentence, second_word)}"
                 ),
+                "options": _cloze_options(second_word, all_distractors, 0),
                 "correct_index": 0,
                 "explanation": (
-                    f"The word '{second_word}' is used as a meaningful clue in the article."
+                    f"The source sentence reads: “{_shorten(second_word_sentence, 180)}” "
+                    f"The author uses “{second_word}” in that exact place. The remaining choices "
+                    "do not match the recorded wording and therefore are not evidence-based answers."
                 ),
             },
             {
@@ -757,7 +870,10 @@ async def _generate_quiz(article_id: str, article: dict | None = None) -> dict:
                 ),
                 "correct_index": 3,
                 "explanation": (
-                    "The correct option uses a complete sentence from the article context."
+                    f"The correct option is the complete source sentence: “{_shorten(support_sentence, 180)}” "
+                    "It contains a subject and a correctly formed predicate. Option 1 has an "
+                    "agreement/verb-form error (“are explains”); option 2 needs “explains”; "
+                    "option 3 is a fragment without a finite main verb."
                 ),
             },
         ],
@@ -769,41 +885,68 @@ async def _generate_quiz(article_id: str, article: dict | None = None) -> dict:
 
 def _build_quiz_context(article_id: str, article: dict) -> dict:
     """Build safe article context for deterministic quiz generation."""
-    raw_parts = [
-        str(article.get("title") or "").strip(),
-        str(article.get("description") or "").strip(),
-        str(article.get("content") or "").strip(),
-    ]
-    raw_text = " ".join(part for part in raw_parts if part)
-    topic = raw_parts[0] or _humanize_article_id(article_id)
-
-    if not raw_text:
-        raw_text = (
-            f"The article focuses on {topic}. "
-            f"It explains important details about {topic}. "
-            f"Readers can use the article to understand why {topic} matters."
-        )
+    title = str(article.get("title") or "").strip()
+    description = str(article.get("description") or "").strip()
+    content = str(article.get("content") or "").strip()
+    body_parts = [part for part in (description, content) if part]
+    raw_text = " ".join(dict.fromkeys(body_parts))
+    topic = title or _humanize_article_id(article_id)
 
     sentences = _split_quiz_sentences(raw_text)
-    if len(sentences) < 3:
-        sentences.extend(
-            [
-                f"The article gives readers useful background about {topic}.",
-                f"It highlights why {topic} is important for everyday understanding.",
-                f"Readers can connect the details to the larger topic of {topic}.",
-            ]
+    if len(sentences) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The article does not contain enough complete sentences for a reliable quiz.",
         )
 
     highlight_words = _extract_highlight_words(article)
-    if not highlight_words:
-        highlight_words = _extract_quiz_keywords(raw_text, topic)
+    extracted_keywords = _extract_quiz_keywords(raw_text, topic)
+    highlight_words = list(dict.fromkeys(highlight_words + extracted_keywords))
 
     return {
         "topic": _shorten(topic, 80),
-        "sentences": sentences[:3],
-        "highlight_words": highlight_words[:2],
-        "source": "article_context" if any(raw_parts) else "article_id_fallback",
+        "sentences": sentences[:6],
+        "highlight_words": highlight_words[:12],
+        "source": "article_context",
     }
+
+
+def _keyword_in_source(
+    sentences: list[str], preferred: list[str], fallback_sentence_index: int
+) -> tuple[str, str]:
+    """Choose a keyword and the real sentence that contains it."""
+    for word in preferred:
+        pattern = re.compile(rf"\b{re.escape(word)}\b", re.IGNORECASE)
+        for sentence in sentences:
+            if pattern.search(sentence):
+                return word.lower(), sentence
+
+    sentence = sentences[min(fallback_sentence_index, len(sentences) - 1)]
+    return _topic_keyword(sentence), sentence
+
+
+def _cloze_source_sentence(sentence: str, word: str) -> str:
+    """Blank one exact source word without changing the rest of the sentence."""
+    return re.sub(
+        rf"\b{re.escape(word)}\b",
+        "_____",
+        _shorten(sentence, 180),
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
+def _cloze_options(correct: str, candidates: list[str], correct_index: int) -> list[str]:
+    """Build stable cloze options while keeping the declared answer index."""
+    wrong = [
+        word.lower()
+        for word in candidates + ["article", "reader", "report", "context"]
+        if word.lower() != correct.lower()
+    ]
+    wrong = list(dict.fromkeys(wrong))[:3]
+    options = wrong.copy()
+    options.insert(correct_index, correct.lower())
+    return options[:4]
 
 
 def _humanize_article_id(article_id: str) -> str:

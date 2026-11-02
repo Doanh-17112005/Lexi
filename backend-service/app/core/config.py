@@ -223,6 +223,7 @@ class Settings(BaseSettings):
     SMTP_USE_SSL: bool = False
     SMTP_TIMEOUT: int = 10
     EMAIL_FROM: str = "noreply@lexilingo.app"
+    DEV_AUTO_VERIFY_EMAIL: bool = False
     PASSWORD_RESET_URL_BASE: str = "lexilingo-app://reset-password"
     PASSWORD_RESET_URL_BASE_PRODUCTION: str | None = None
     EMAIL_VERIFICATION_URL_BASE: str = "https://lexilingo.me/verify-email"
@@ -395,6 +396,15 @@ class Settings(BaseSettings):
         if self.is_production and self.EMAIL_VERIFICATION_URL_BASE_PRODUCTION:
             return self.EMAIL_VERIFICATION_URL_BASE_PRODUCTION
         return self.EMAIL_VERIFICATION_URL_BASE
+
+    @property
+    def should_auto_verify_email_in_development(self) -> bool:
+        """Allow local login when no SMTP server exists, never in production."""
+        return (
+            self.is_development
+            and self.DEV_AUTO_VERIFY_EMAIL
+            and not self.SMTP_HOST
+        )
 
 
 # Global settings instance

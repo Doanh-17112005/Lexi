@@ -50,6 +50,34 @@ def test_clean_production_cors_regex_is_accepted():
     assert settings.is_production
 
 
+def test_dev_auto_verify_email_requires_development_without_smtp():
+    settings = Settings(
+        APP_ENV="development",
+        DEV_AUTO_VERIFY_EMAIL=True,
+        SMTP_HOST=None,
+    )
+    assert settings.should_auto_verify_email_in_development
+
+
+def test_dev_auto_verify_email_is_disabled_when_smtp_is_configured():
+    settings = Settings(
+        APP_ENV="development",
+        DEV_AUTO_VERIFY_EMAIL=True,
+        SMTP_HOST="smtp.example.com",
+    )
+    assert not settings.should_auto_verify_email_in_development
+
+
+def test_dev_auto_verify_email_is_always_disabled_in_production():
+    settings = Settings(
+        **BASE_PROD_KWARGS,
+        CORS_ALLOW_ORIGIN_REGEX=r"https?://([a-zA-Z0-9-]+\.)*lexilingo\.me(:\d+)?",
+        DEV_AUTO_VERIFY_EMAIL=True,
+        SMTP_HOST=None,
+    )
+    assert not settings.should_auto_verify_email_in_development
+
+
 _CLEAN_CORS_REGEX = r"https?://([a-zA-Z0-9-]+\.)*lexilingo\.me(:\d+)?"
 
 

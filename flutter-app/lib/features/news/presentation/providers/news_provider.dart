@@ -152,6 +152,7 @@ class NewsProvider extends ChangeNotifier {
   /// Load quiz for an article.
   Future<void> loadQuiz(String articleId, {NewsArticle? article}) async {
     _isLoadingQuiz = true;
+    _error = null;
     _currentQuiz = null;
     _currentQuizArticleId = articleId;
     _currentQuizArticle = article ?? _findArticle(articleId);
@@ -160,8 +161,13 @@ class NewsProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _currentQuiz = await _repository.getQuiz(articleId);
+      final quizArticle = _currentQuizArticle;
+      if (quizArticle == null) {
+        throw StateError('Article context is required to load its quiz.');
+      }
+      _currentQuiz = await _repository.getQuiz(quizArticle);
     } catch (e) {
+      _error = e.toString();
       debugPrint('Failed to load quiz: $e');
     } finally {
       _isLoadingQuiz = false;

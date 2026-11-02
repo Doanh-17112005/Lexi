@@ -1,6 +1,8 @@
 import '../../../../core/network/api_client.dart';
 import '../../../../core/services/local_cache_service.dart';
+import '../../../../core/services/user_scope_service.dart';
 import '../../domain/entities/game_entities.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Repository for the Games feature — word games, XP system, and leaderboard.
 ///
@@ -213,6 +215,55 @@ class GamesRepository {
     await _cache.invalidate('xp:profile:v1');
     await _cache.invalidate('xp:leaderboard:limit:20');
     return XPAwardResult.fromJson(xpData);
+  }
+
+  Future<GameAnswerFeedback> saveGameAnswer({
+    required String sessionId,
+    required String itemId,
+    required String answer,
+  }) async {
+    final encodedItemId = Uri.encodeComponent(itemId);
+    final data = await _apiClient.post(
+      '/games/sessions/$sessionId/answers/$encodedItemId',
+      body: {'answer': answer},
+    );
+    return GameAnswerFeedback.fromJson(data);
+  }
+
+  Future<GameSessionProgress> getGameSessionProgress(String sessionId) async {
+    final data = await _apiClient.get('/games/sessions/$sessionId');
+    return GameSessionProgress.fromJson(data);
+  }
+
+  Future<String?> getSavedSessionId({
+    required GameType gameType,
+    required String level,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getString(await _sessionKey(gameType, level));
+  }
+
+  Future<void> saveSessionId({
+    required GameType gameType,
+    required String level,
+    required String sessionId,
+  }) async {
+    if (sessionId.isEmpty) return;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(await _sessionKey(gameType, level), sessionId);
+  }
+
+  Future<void> clearSavedSession({
+    required GameType gameType,
+    required String level,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(await _sessionKey(gameType, level));
+  }
+
+  Future<String> _sessionKey(GameType gameType, String level) async {
+    final userScope = await UserScopeService.getScopeOrDefault();
+    return 'game_session:v1:$userScope:${gameType.apiKey}:$level';
   }
 
   // ── XP System ─────────────────────────────────────────────────────────────

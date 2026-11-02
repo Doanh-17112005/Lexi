@@ -506,11 +506,17 @@ class BookProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final excerpt = _quizExcerptForChapter(chapter);
+      if (excerpt == null || excerpt.length < 40) {
+        throw StateError(
+          'Open the reader and read this chapter before starting its quiz.',
+        );
+      }
       _currentQuiz = await _repository.getChapterQuiz(
         bookId: book.id,
         chapter: chapter,
         book: book,
-        chapterExcerpt: _quizExcerptForChapter(chapter),
+        chapterExcerpt: excerpt,
       );
     } catch (e) {
       _error = e.toString();

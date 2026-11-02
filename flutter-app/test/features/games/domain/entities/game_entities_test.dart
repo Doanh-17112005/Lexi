@@ -593,6 +593,54 @@ void main() {
   });
 
   group('Canonical game API contracts', () {
+    test('GameSessionProgress parses snapshot, status and explanations', () {
+      final progress = GameSessionProgress.fromJson(<String, dynamic>{
+        'session_id': 'session-1',
+        'game_type': 'grammar_quiz',
+        'cefr_level': 'B1',
+        'status': 'in_progress',
+        'content': <String, dynamic>{'topic': 'mixed'},
+        'answers': <dynamic>[
+          <String, dynamic>{
+            'session_id': 'session-1',
+            'item_id': 'q1',
+            'answer': 'has',
+            'is_correct': true,
+            'correct_answer': 'has',
+            'already_submitted': true,
+            'explanation': <String, dynamic>{
+              'summary': 'Use has with she.',
+              'rule': 'Third-person singular takes has.',
+              'example': 'She has finished.',
+              'option_explanations': <String, dynamic>{
+                'have': 'Have does not agree with she.',
+              },
+            },
+          },
+        ],
+      });
+
+      expect(progress.canResume, isTrue);
+      expect(progress.content['topic'], 'mixed');
+      expect(progress.answers.single.alreadySubmitted, isTrue);
+      expect(
+        progress.answers.single.explanation.optionExplanations['have'],
+        'Have does not agree with she.',
+      );
+    });
+
+    test('completed or expired session cannot resume', () {
+      for (final status in <String>['completed', 'expired']) {
+        final progress = GameSessionProgress.fromJson(<String, dynamic>{
+          'session_id': 'session-1',
+          'game_type': 'matching',
+          'status': status,
+          'content': <String, dynamic>{'pairs': <dynamic>[]},
+        });
+        expect(progress.canResume, isFalse);
+      }
+    });
+
     test('MatchingGame parses canonical variant and definitions column', () {
       final game = MatchingGame.fromJson(<String, dynamic>{
         'cefr_level': 'A1',

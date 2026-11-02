@@ -11,6 +11,7 @@ Tests cover:
 """
 
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 
@@ -75,6 +76,114 @@ class TestParseJson3Captions:
         assert segments[1]["start_ms"] == 4000
         assert segments[1]["end_ms"] == 5500
         assert segments[1]["text"] == "This is a test"
+
+
+class TestYoutubeAtomFallback:
+    @pytest.mark.asyncio
+    async def test_channel_atom_feed_parses_real_video_metadata(self):
+        from app.routes.youtube import _fetch_channel_atom_feed
+
+        atom_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom"
+              xmlns:yt="http://www.youtube.com/xml/schemas/2015"
+              xmlns:media="http://search.yahoo.com/mrss/">
+          <entry>
+            <yt:videoId>video123</yt:videoId>
+            <yt:channelId>channel-real</yt:channelId>
+            <title>Present perfect grammar lesson</title>
+            <author><name>BBC Learning English</name></author>
+            <published>2026-10-31T08:00:00+00:00</published>
+            <media:group>
+              <media:description>Learn English with a real lesson.</media:description>
+              <media:thumbnail url="https://i.ytimg.com/vi/video123/custom.jpg" />
+            </media:group>
+          </entry>
+          <entry><title>Entry without a video id</title></entry>
+        </feed>"""
+        response = MagicMock(content=atom_xml)
+        response.raise_for_status = MagicMock()
+        client = AsyncMock()
+        client.get.return_value = response
+
+        with patch("app.routes.youtube.httpx.AsyncClient") as client_factory:
+            client_factory.return_value.__aenter__.return_value = client
+            result = await _fetch_channel_atom_feed("requested-channel")
+
+        assert result["total_results"] == 1
+        video = result["videos"][0]
+        assert video["video_id"] == "video123"
+        assert video["channel_id"] == "channel-real"
+        assert video["channel_title"] == "BBC Learning English"
+        assert video["description"] == "Learn English with a real lesson."
+        assert video["thumbnail_url"].endswith("custom.jpg")
+        assert video["thumbnail_medium"].endswith("/video123/mqdefault.jpg")
+        assert "requested-channel" in client.get.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_curated_atom_search_filters_deduplicates_sorts_and_limits(self):
+        from app.routes.youtube import _search_curated_atom_feeds
+
+        async def feed(channel_id: str):
+            if channel_id == "channel-1":
+                return {
+                    "videos": [
+                        {
+                            "video_id": "old",
+                            "title": "Grammar basics",
+                            "description": "",
+                            "channel_title": "One",
+                            "published_at": "2026-01-01T00:00:00Z",
+                        },
+                        {
+                            "video_id": "duplicate",
+                            "title": "Grammar practice",
+                            "description": "",
+                            "channel_title": "One",
+                            "published_at": "2026-02-01T00:00:00Z",
+                        },
+                    ]
+                }
+            return {
+                "videos": [
+                    {
+                        "video_id": "duplicate",
+                        "title": "Grammar duplicate",
+                        "description": "",
+                        "channel_title": "Two",
+                        "published_at": "2026-03-01T00:00:00Z",
+                    },
+                    {
+                        "video_id": "new",
+                        "title": "Advanced grammar",
+                        "description": "",
+                        "channel_title": "Two",
+                        "published_at": "2026-04-01T00:00:00Z",
+                    },
+                    {
+                        "video_id": "unrelated",
+                        "title": "Travel vocabulary",
+                        "description": "",
+                        "channel_title": "Two",
+                        "published_at": "2026-05-01T00:00:00Z",
+                    },
+                ]
+            }
+
+        with patch(
+            "app.routes.youtube.CURATED_CHANNELS",
+            [{"id": "channel-1"}, {"id": "channel-2"}],
+        ), patch(
+            "app.routes.youtube._fetch_channel_atom_feed",
+            new_callable=AsyncMock,
+            side_effect=feed,
+        ):
+            result = await _search_curated_atom_feeds("grammar", 2)
+
+        assert result["total_results"] == 3
+        assert [video["video_id"] for video in result["videos"]] == [
+            "new",
+            "duplicate",
+        ]
 
     def test_skip_empty_and_newline_only_events(self):
         from app.routes.youtube import _parse_json3_captions
@@ -224,12 +333,50 @@ class TestSearchVideos:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_503_when_no_api_key_configured(self, no_db_client: AsyncClient):
-        """Should return 503 when YOUTUBE_API_KEY is not set."""
-        with patch("app.routes.youtube.settings") as mock_settings:
+    async def test_no_api_key_uses_curated_atom_search(
+        self, no_db_client: AsyncClient
+    ):
+        async def get_or_fetch(**kwargs):
+            return SimpleNamespace(
+                data=await kwargs["fetch_fn"](), source="api", is_stale=False
+            )
+
+        atom_data = {
+            "videos": [
+                {
+                    "video_id": "atom-video",
+                    "title": "English grammar",
+                    "description": "A real public feed item",
+                    "channel_title": "BBC Learning English",
+                    "channel_id": "channel-1",
+                    "published_at": "2026-11-01T00:00:00Z",
+                    "thumbnail_url": "https://i.ytimg.com/vi/atom-video/hqdefault.jpg",
+                    "thumbnail_medium": "https://i.ytimg.com/vi/atom-video/mqdefault.jpg",
+                }
+            ],
+            "next_page_token": None,
+            "prev_page_token": None,
+            "total_results": 1,
+        }
+        with patch("app.routes.youtube.settings") as mock_settings, patch(
+            "app.routes.youtube.APICacheService"
+        ) as cache_class, patch(
+            "app.routes.youtube._search_curated_atom_feeds",
+            new_callable=AsyncMock,
+            return_value=atom_data,
+        ) as atom_search:
             mock_settings.YOUTUBE_API_KEY = None
+            cache = AsyncMock()
+            cache.get_or_fetch.side_effect = get_or_fetch
+            cache_class.return_value = cache
             response = await no_db_client.get("/api/v1/youtube/search?q=english")
-        assert response.status_code == 503
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["source"] == "youtube_atom"
+        assert payload["data"]["videos"][0]["video_id"] == "atom-video"
+        atom_search.assert_awaited_once_with("english", 10, None)
+        assert cache.get_or_fetch.await_args.kwargs["cost"] == 0
 
     @pytest.mark.asyncio
     async def test_returns_cached_response(self, no_db_client: AsyncClient):
@@ -418,13 +565,53 @@ class TestGetChannelVideos:
     """Tests for GET /youtube/channels/{channel_id}/videos endpoint."""
 
     @pytest.mark.asyncio
-    async def test_503_when_no_api_key(self, no_db_client: AsyncClient):
-        with patch("app.routes.youtube.settings") as mock_settings:
+    async def test_no_api_key_uses_channel_atom_without_search_query_variable(
+        self, no_db_client: AsyncClient
+    ):
+        async def get_or_fetch(**kwargs):
+            return SimpleNamespace(
+                data=await kwargs["fetch_fn"](), source="api", is_stale=False
+            )
+
+        atom_data = {
+            "videos": [
+                {
+                    "video_id": "channel-video",
+                    "title": "Latest lesson",
+                    "description": "",
+                    "channel_title": "BBC Learning English",
+                    "channel_id": "UCHaHD477h-FeBbVh9Sh7syA",
+                    "published_at": "2026-11-01T00:00:00Z",
+                    "thumbnail_url": "",
+                    "thumbnail_medium": "",
+                }
+            ],
+            "next_page_token": None,
+            "prev_page_token": None,
+            "total_results": 1,
+        }
+        with patch("app.routes.youtube.settings") as mock_settings, patch(
+            "app.routes.youtube.APICacheService"
+        ) as cache_class, patch(
+            "app.routes.youtube._fetch_channel_atom_feed",
+            new_callable=AsyncMock,
+            return_value=atom_data,
+        ) as atom_feed:
             mock_settings.YOUTUBE_API_KEY = None
+            cache = AsyncMock()
+            cache.get_or_fetch.side_effect = get_or_fetch
+            cache_class.return_value = cache
             response = await no_db_client.get(
                 "/api/v1/youtube/channels/UCHaHD477h-FeBbVh9Sh7syA/videos"
             )
-        assert response.status_code == 503
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["channel_id"] == "UCHaHD477h-FeBbVh9Sh7syA"
+        assert payload["source"] == "youtube_atom"
+        assert payload["data"]["videos"][0]["video_id"] == "channel-video"
+        atom_feed.assert_awaited_once_with("UCHaHD477h-FeBbVh9Sh7syA")
+        assert cache.get_or_fetch.await_args.kwargs["cost"] == 0
 
     @pytest.mark.asyncio
     async def test_returns_videos_for_channel(self, no_db_client: AsyncClient):

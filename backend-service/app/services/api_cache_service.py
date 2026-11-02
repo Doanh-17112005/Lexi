@@ -359,6 +359,8 @@ class APICacheService:
         self, redis_key: str, data: str, ttl: int
     ) -> None:
         """Push data into Redis cache."""
+        if ttl <= 0:
+            return
         redis = await RedisClient.get_instance()
         if redis is not None:
             try:

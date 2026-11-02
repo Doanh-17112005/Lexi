@@ -1,4 +1,5 @@
 from datetime import date
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -81,6 +82,19 @@ async def test_zero_cost_usage_is_not_recorded(monkeypatch):
 
     assert status == QuotaStatus.NORMAL
     assert redis.incrby_calls == []
+
+
+@pytest.mark.asyncio
+async def test_books_quiz_is_known_and_zero_cost_is_not_recorded(monkeypatch):
+    check_status = AsyncMock(return_value=QuotaStatus.NORMAL)
+    monkeypatch.setattr(QuotaManager, "check_status", check_status)
+
+    assert QuotaManager.LIMITS["books_quiz"] > 0
+
+    status = await QuotaManager.record_request("books_quiz", cost=0)
+
+    assert status == QuotaStatus.NORMAL
+    check_status.assert_awaited_once_with("books_quiz", cost=0)
 
 
 @pytest.mark.asyncio

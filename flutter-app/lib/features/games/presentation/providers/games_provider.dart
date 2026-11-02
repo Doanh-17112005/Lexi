@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:lexilingo_app/core/error/exceptions.dart';
+import 'package:lexilingo_app/core/network/response_models.dart';
 import '../../data/repositories/games_repository.dart';
 import '../../domain/entities/game_entities.dart';
 
@@ -54,6 +56,7 @@ class GamesProvider extends ChangeNotifier {
 
   // ── Game Result ───────────────────────────────────────────────────────────
   GameResult? _lastGameResult;
+  final Map<String, GameAnswerFeedback> _sessionAnswers = {};
 
   // ── Getters ───────────────────────────────────────────────────────────────
   bool get isLoading => _isLoading;
@@ -76,6 +79,8 @@ class GamesProvider extends ChangeNotifier {
   List<LeaderboardUser> get leaderboard => _leaderboard;
   Map<String, dynamic>? get currentUserLeaderboard => _currentUserLeaderboard;
   GameResult? get lastGameResult => _lastGameResult;
+  Map<String, GameAnswerFeedback> get sessionAnswers =>
+      Map.unmodifiable(_sessionAnswers);
 
   int get totalXp => _xpProfile?.totalXp ?? 0;
   int get numericLevel => _xpProfile?.numericLevel ?? 1;
@@ -129,10 +134,16 @@ class GamesProvider extends ChangeNotifier {
     _setLoading(true);
     _currentGame = GameType.wordScramble;
     try {
-      _wordScramble = await _repository.getWordScramble(
-        level: _selectedLevel,
-        count: count,
-      );
+      final progress = await _resume(GameType.wordScramble);
+      if (progress != null) {
+        _wordScramble = WordScrambleGame.fromJson(_resumedContent(progress));
+      } else {
+        _wordScramble = await _repository.getWordScramble(
+          level: _selectedLevel,
+          count: count,
+        );
+        await _rememberSession(GameType.wordScramble, _wordScramble!.sessionId);
+      }
       _gameStartTime = DateTime.now();
       _error = null;
     } catch (e) {
@@ -148,10 +159,16 @@ class GamesProvider extends ChangeNotifier {
     _setLoading(true);
     _currentGame = GameType.fillBlank;
     try {
-      _fillBlank = await _repository.getFillBlank(
-        level: _selectedLevel,
-        count: count,
-      );
+      final progress = await _resume(GameType.fillBlank);
+      if (progress != null) {
+        _fillBlank = FillBlankGame.fromJson(_resumedContent(progress));
+      } else {
+        _fillBlank = await _repository.getFillBlank(
+          level: _selectedLevel,
+          count: count,
+        );
+        await _rememberSession(GameType.fillBlank, _fillBlank!.sessionId);
+      }
       _gameStartTime = DateTime.now();
       _error = null;
     } catch (e) {
@@ -167,10 +184,23 @@ class GamesProvider extends ChangeNotifier {
     _setLoading(true);
     _currentGame = GameType.matching;
     try {
-      _matching = await _repository.getMatchingGame(
-        level: _selectedLevel,
-        variant: variant,
-      );
+      final progress = await _resume(GameType.matching);
+      if (progress != null && progress.content['variant'] == variant) {
+        _matching = MatchingGame.fromJson(_resumedContent(progress));
+      } else {
+        if (progress != null) {
+          await _repository.clearSavedSession(
+            gameType: GameType.matching,
+            level: _selectedLevel,
+          );
+          _sessionAnswers.clear();
+        }
+        _matching = await _repository.getMatchingGame(
+          level: _selectedLevel,
+          variant: variant,
+        );
+        await _rememberSession(GameType.matching, _matching!.sessionId);
+      }
       _gameStartTime = DateTime.now();
       _error = null;
     } catch (e) {
@@ -186,10 +216,16 @@ class GamesProvider extends ChangeNotifier {
     _setLoading(true);
     _currentGame = GameType.spellingBee;
     try {
-      _spellingBee = await _repository.getSpellingBee(
-        level: _selectedLevel,
-        count: count,
-      );
+      final progress = await _resume(GameType.spellingBee);
+      if (progress != null) {
+        _spellingBee = SpellingBeeGame.fromJson(_resumedContent(progress));
+      } else {
+        _spellingBee = await _repository.getSpellingBee(
+          level: _selectedLevel,
+          count: count,
+        );
+        await _rememberSession(GameType.spellingBee, _spellingBee!.sessionId);
+      }
       _gameStartTime = DateTime.now();
       _error = null;
     } catch (e) {
@@ -205,11 +241,25 @@ class GamesProvider extends ChangeNotifier {
     _setLoading(true);
     _currentGame = GameType.grammarQuiz;
     try {
-      _grammarQuiz = await _repository.getGrammarQuiz(
-        level: _selectedLevel,
-        topic: topic,
-        count: count,
-      );
+      final progress = await _resume(GameType.grammarQuiz);
+      final requestedTopic = topic ?? 'mixed';
+      if (progress != null && progress.content['topic'] == requestedTopic) {
+        _grammarQuiz = GrammarQuizGame.fromJson(_resumedContent(progress));
+      } else {
+        if (progress != null) {
+          await _repository.clearSavedSession(
+            gameType: GameType.grammarQuiz,
+            level: _selectedLevel,
+          );
+          _sessionAnswers.clear();
+        }
+        _grammarQuiz = await _repository.getGrammarQuiz(
+          level: _selectedLevel,
+          topic: topic,
+          count: count,
+        );
+        await _rememberSession(GameType.grammarQuiz, _grammarQuiz!.sessionId);
+      }
       _gameStartTime = DateTime.now();
       _error = null;
     } catch (e) {
@@ -225,10 +275,16 @@ class GamesProvider extends ChangeNotifier {
     _setLoading(true);
     _currentGame = GameType.hangman;
     try {
-      _hangman = await _repository.getHangmanGame(
-        level: _selectedLevel,
-        category: category,
-      );
+      final progress = await _resume(GameType.hangman);
+      if (progress != null) {
+        _hangman = HangmanGame.fromJson(_resumedContent(progress));
+      } else {
+        _hangman = await _repository.getHangmanGame(
+          level: _selectedLevel,
+          category: category,
+        );
+        await _rememberSession(GameType.hangman, _hangman!.sessionId);
+      }
       _gameStartTime = DateTime.now();
       _error = null;
     } catch (e) {
@@ -282,7 +338,9 @@ class GamesProvider extends ChangeNotifier {
 
     _pendingCompletion = _PendingGameCompletion(
       sessionId: resolvedSessionId,
-      answers: answers.map((answer) => Map<String, String>.from(answer)).toList(),
+      answers: answers
+          .map((answer) => Map<String, String>.from(answer))
+          .toList(),
       durationSeconds: durationSeconds,
       hintsUsed: hintsUsed,
     );
@@ -296,6 +354,28 @@ class GamesProvider extends ChangeNotifier {
       return _lastXPResult;
     }
     return _submitPendingCompletion();
+  }
+
+  Future<GameAnswerFeedback?> saveAnswer({
+    required String sessionId,
+    required String itemId,
+    required String answer,
+  }) async {
+    try {
+      final feedback = await _repository.saveGameAnswer(
+        sessionId: sessionId,
+        itemId: itemId,
+        answer: answer,
+      );
+      _sessionAnswers[itemId] = feedback;
+      _awardError = null;
+      notifyListeners();
+      return feedback;
+    } catch (error) {
+      _awardError = error.toString();
+      notifyListeners();
+      return null;
+    }
   }
 
   Future<XPAwardResult?> _submitPendingCompletion() async {
@@ -314,6 +394,13 @@ class GamesProvider extends ChangeNotifier {
       );
       _lastXPResult = result;
       _awardStatus = GameAwardStatus.awarded;
+      final completedGame = _lastGameResult?.gameType;
+      if (completedGame != null) {
+        await _repository.clearSavedSession(
+          gameType: completedGame,
+          level: _selectedLevel,
+        );
+      }
       if (_lastGameResult != null) {
         _lastGameResult = _lastGameResult!.copyWith(xpEarned: result.xpAwarded);
       }
@@ -350,6 +437,66 @@ class GamesProvider extends ChangeNotifier {
     GameType.grammarQuiz => _grammarQuiz?.sessionId ?? '',
     GameType.hangman => _hangman?.sessionId ?? '',
   };
+
+  Future<GameSessionProgress?> _resume(GameType gameType) async {
+    _sessionAnswers.clear();
+    final sessionId = await _repository.getSavedSessionId(
+      gameType: gameType,
+      level: _selectedLevel,
+    );
+    if (sessionId == null || sessionId.isEmpty) return null;
+    try {
+      final progress = await _repository.getGameSessionProgress(sessionId);
+      if (!progress.canResume ||
+          progress.gameType != gameType.apiKey ||
+          progress.cefrLevel != _selectedLevel) {
+        await _repository.clearSavedSession(
+          gameType: gameType,
+          level: _selectedLevel,
+        );
+        return null;
+      }
+      _sessionAnswers.addEntries(
+        progress.answers.map((answer) => MapEntry(answer.itemId, answer)),
+      );
+      return progress;
+    } catch (error) {
+      debugPrint('Game session resume failed: $error');
+      final invalidReference =
+          error is ApiErrorException &&
+              {
+                ErrorCodes.notFound,
+                ErrorCodes.authForbidden,
+                ErrorCodes.permissionDenied,
+              }.contains(error.code) ||
+          error is ServerException &&
+              (error.message.contains('status 404') ||
+                  error.message.contains('status 403'));
+      if (invalidReference) {
+        await _repository.clearSavedSession(
+          gameType: gameType,
+          level: _selectedLevel,
+        );
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  Map<String, dynamic> _resumedContent(GameSessionProgress progress) => {
+    ...progress.content,
+    'session_id': progress.sessionId,
+    'cefr_level': progress.cefrLevel ?? _selectedLevel,
+  };
+
+  Future<void> _rememberSession(GameType gameType, String sessionId) async {
+    _sessionAnswers.clear();
+    await _repository.saveSessionId(
+      gameType: gameType,
+      level: _selectedLevel,
+      sessionId: sessionId,
+    );
+  }
 
   void _setLoading(bool value) {
     _isLoading = value;

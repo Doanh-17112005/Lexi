@@ -48,6 +48,28 @@ from app.schemas.user import UserResponse
 from app.schemas.common import MessageResponse, ErrorCodes, ErrorDetail, ErrorResponse
 
 logger = logging.getLogger(__name__)
+
+
+async def _auto_verify_local_email_if_needed(
+    db: AsyncSession,
+    user: User,
+    *,
+    email_sent: bool,
+) -> bool:
+    """Auto-verify only for explicit local development without SMTP."""
+    if email_sent or not settings.should_auto_verify_email_in_development:
+        return False
+
+    user.is_verified = True
+    await db.commit()
+    await db.refresh(user)
+    logger.warning(
+        "SMTP is unavailable; auto-verified local development user id=%s",
+        user.id,
+    )
+    return True
+
+
 router = APIRouter()
 
 
@@ -106,6 +128,7 @@ async def register(
     if (await db.execute(select(User).where(User.username == request.username))).scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already taken")
 
+    email_sent = False
     try:
         user = await register_user(db, request)
     except IntegrityError:
@@ -117,11 +140,17 @@ async def register(
             {"sub": str(user.id), "email": user.email, "purpose": "email_verify"},
             expires_minutes=1440,
         )
-        await EmailService.send_verification_email(
+        email_sent = await EmailService.send_verification_email(
             to_email=user.email, token=token, display_name=user.display_name,
         )
     except Exception as exc:
         logger.warning("Could not send verification email to %s: %s", user.email, exc)
+
+    await _auto_verify_local_email_if_needed(
+        db,
+        user,
+        email_sent=email_sent,
+    )
 
     return _build_user_response(user)
 
@@ -142,10 +171,15 @@ async def resend_verification_email(
                 {"sub": str(user.id), "email": user.email, "purpose": "email_verify"},
                 expires_minutes=1440,
             )
-            await EmailService.send_verification_email(
+            email_sent = await EmailService.send_verification_email(
                 to_email=user.email,
                 token=token,
                 display_name=user.display_name,
+            )
+            await _auto_verify_local_email_if_needed(
+                db,
+                user,
+                email_sent=email_sent,
             )
         except Exception as exc:
             logger.warning("Could not resend verification email to %s: %s", user.email, exc)
@@ -170,6 +204,15 @@ async def login(
     # is issued. Google/Facebook logins set is_verified from the provider's
     # own email_verified claim at account-creation time, so this never blocks
     # OAuth users.
+    if not user.is_verified and settings.should_auto_verify_email_in_development:
+        user.is_verified = True
+        await db.commit()
+        await db.refresh(user)
+        logger.warning(
+            "SMTP is unavailable; auto-verified local user during login id=%s",
+            user.id,
+        )
+
     if not user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -387,13 +430,6 @@ async def google_login(
     logger.info(f"Google login attempt: source={request.source}, audience={audience}")
 
     google_info = await verify_google_token(request.id_token, audience=audience)
-
-    # Only skip audience check when GOOGLE_CLIENT_ID is not configured.
-    # If it IS configured and verification fails, the token belongs to a different
-    # app/project — do NOT retry unchecked (would accept tokens from any Google app).
-    if not google_info and request.source != "admin" and not audience:
-        logger.info("Retrying token verification without audience restriction (GOOGLE_CLIENT_ID not configured)")
-        google_info = await verify_google_token(request.id_token, audience=None)
 
     # Flutter web can return a Firebase ID token instead of Google OAuth id_token.
     # Accept only Firebase tokens issued for Google sign-in to keep auth strict.

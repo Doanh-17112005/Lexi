@@ -188,13 +188,64 @@ async def award_xp_transaction(
     old_level = locked_user.numeric_level or 1
     if xp_awarded <= 0:
         progress = get_numeric_level_progress(old_xp)
+        if source_id:
+            db.add(
+                XPTransaction(
+                    user_id=user.id,
+                    amount=0,
+                    base_amount=capped_base_xp,
+                    multiplier=multiplier,
+                    source=source,
+                    source_id=source_id,
+                    source_detail=source_detail,
+                    duration_seconds=duration_seconds,
+                    level_before=old_level,
+                    level_after=old_level,
+                    leveled_up=False,
+                )
+            )
+
+        rank_info = calculate_rank(old_level, locked_user.level or "A1")
+        from app.services.streak_service import record_daily_activity
+
+        await record_daily_activity(
+            db,
+            user.id,
+            xp_earned=0,
+            study_time_minutes=_clamped_study_minutes(duration_seconds),
+            league=rank_info.rank.value,
+            today=datetime.now(timezone.utc).date(),
+        )
+
+        if commit:
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                if source_id:
+                    existing = await db.execute(
+                        select(XPTransaction.id).where(
+                            XPTransaction.user_id == user.id,
+                            XPTransaction.source == source,
+                            XPTransaction.source_id == source_id,
+                        )
+                    )
+                    if existing.scalar_one_or_none():
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="XP already awarded for this activity.",
+                        ) from None
+                raise
+            await invalidate_cache("leaderboard")
+
+        at_daily_cap = cap_remaining <= 0
         return XPAwardResult(
             xp_awarded=0,
             base_xp=capped_base_xp,
             multiplier=multiplier,
             new_total_xp=old_xp,
             daily_xp_today=daily_xp_today,
-            daily_cap_remaining=0,
+            daily_cap_remaining=cap_remaining,
             leveled_up=False,
             old_level=old_level,
             new_level=old_level,
@@ -202,7 +253,11 @@ async def award_xp_transaction(
             level_progress_percent=progress.level_progress_percent,
             xp_for_next_level=progress.xp_for_next_level,
             streak_days=streak_days,
-            message="Daily XP cap (500) reached. Come back tomorrow!",
+            message=(
+                "Daily XP cap (500) reached. Come back tomorrow!"
+                if at_daily_cap
+                else "Activity completed. No XP earned."
+            ),
         )
 
     new_xp = old_xp + xp_awarded

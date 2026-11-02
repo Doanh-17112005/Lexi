@@ -18,10 +18,13 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.crud.games import create_game_session, get_game_session_for_update
 from app.models.user import User
-from app.models.games import GameWord
+from app.models.games import GameSession, GameWord
 from app.schemas.games import (
+    GameAnswerProgressRequest,
+    GameAnswerProgressResponse,
     GameSessionCompleteRequest,
     GameSessionCompleteResponse,
+    GameSessionProgressResponse,
 )
 from app.services.game_scoring_service import (
     GameScoringError,
@@ -50,6 +53,119 @@ GAME_SESSION_TTL_SECONDS = 2 * 60 * 60
 
 def _session_id(session) -> str:
     return str(session.id)
+
+
+def _game_session_age_seconds(session: GameSession) -> int:
+    started_at = session.started_at or session.created_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - started_at).total_seconds()))
+
+
+def _game_session_expired(session: GameSession) -> bool:
+    return (
+        session.completed_at is None
+        and _game_session_age_seconds(session) > GAME_SESSION_TTL_SECONDS
+    )
+
+
+def _normalize_game_answer(value: object) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _stored_answer_map(session_data: dict) -> dict[str, str]:
+    raw = session_data.get("submitted_answers") or {}
+    if isinstance(raw, dict):
+        return {str(key): str(value or "") for key, value in raw.items()}
+    if isinstance(raw, list):
+        return {
+            str(item.get("id") or ""): str(item.get("answer") or "")
+            for item in raw
+            if isinstance(item, dict) and item.get("id")
+        }
+    return {}
+
+
+def _explanation_for_expected(expected: dict) -> dict:
+    explanation = expected.get("explanation")
+    if isinstance(explanation, dict):
+        return explanation
+    return {
+        "summary": str(explanation or ""),
+        "rule": "",
+        "example": "",
+        "option_explanations": {},
+    }
+
+
+def _choice_explanation(
+    *,
+    prompt: str,
+    options: list[str],
+    correct_answer: str,
+    rule: str,
+) -> dict:
+    completed = prompt.replace("___", correct_answer)
+    option_explanations = {
+        option: (
+            f"'{option}' is correct because it follows this rule: {rule}"
+            if option == correct_answer
+            else (
+                f"'{option}' does not fit the grammar pattern in this sentence. "
+                f"Apply the rule '{rule}' and compare with: {completed}"
+            )
+        )
+        for option in options
+    }
+    return {
+        "summary": (
+            f"The correct answer is '{correct_answer}'. "
+            f"The complete sentence is: {completed}"
+        ),
+        "rule": rule,
+        "example": completed,
+        "option_explanations": option_explanations,
+    }
+
+
+def _vocabulary_explanation(
+    *,
+    word: str,
+    definition: str,
+    example: str | None,
+    translation: str | None = None,
+) -> dict:
+    summary = f"'{word}' means: {definition}"
+    if translation:
+        summary += f" Vietnamese: {translation}."
+    return {
+        "summary": summary,
+        "rule": "Learn the spelling together with its meaning and use in context.",
+        "example": example or "",
+        "option_explanations": {},
+    }
+
+
+def _progress_answer_response(
+    *,
+    session: GameSession,
+    expected: dict,
+    answer: str,
+    already_submitted: bool,
+) -> GameAnswerProgressResponse:
+    correct_answer = str(expected.get("answer") or "")
+    return GameAnswerProgressResponse(
+        session_id=str(session.id),
+        item_id=str(expected.get("id") or ""),
+        answer=answer,
+        is_correct=(
+            _normalize_game_answer(answer)
+            == _normalize_game_answer(correct_answer)
+        ),
+        correct_answer=correct_answer,
+        explanation=_explanation_for_expected(expected),
+        already_submitted=already_submitted,
+    )
 
 # ── CEFR Timer / XP Config ────────────────────────────────────────────────────
 
@@ -114,6 +230,13 @@ GAME_WORDS_SEED = [
     {"word": "unprecedented", "definition": "Never done or known before",                    "hint": "Totally new and unique",           "cefr_level": "C1", "category": "adjectives", "letter_count": 13, "xp_value": 30, "ipa_pronunciation": "/ʌnˈpresɪdentɪd/",  "example_sentence": "The storm caused unprecedented damage.", "synonyms": ["unheard-of", "novel"],           "vietnamese_translation": "chưa từng có"},
     {"word": "conscientious", "definition": "Wishing to do one's work or duty well",        "hint": "Careful and thorough",             "cefr_level": "C1", "category": "adjectives", "letter_count": 13, "xp_value": 30, "ipa_pronunciation": "/ˌkɒnʃiˈenʃəs/",    "example_sentence": "She is a conscientious worker.",         "synonyms": ["diligent", "thorough"],          "vietnamese_translation": "tận tâm"},
     {"word": "ambiguous",     "definition": "Open to more than one interpretation",         "hint": "Can mean more than one thing",     "cefr_level": "C1", "category": "adjectives", "letter_count": 9,  "xp_value": 25, "ipa_pronunciation": "/æmˈbɪɡjuəs/",      "example_sentence": "The contract clause was ambiguous.",     "synonyms": ["unclear", "vague"],              "vietnamese_translation": "mơ hồ"},
+    # ── C2 ───────────────────────────────────────────────────────────────────
+    {"word": "meticulous",      "definition": "Showing very careful attention to detail",              "hint": "Extremely careful and precise",       "cefr_level": "C2", "category": "adjectives", "letter_count": 10, "xp_value": 35, "ipa_pronunciation": "/məˈtɪkjələs/",      "example_sentence": "The editor kept meticulous records of every revision.", "synonyms": ["scrupulous", "thorough"],       "vietnamese_translation": "tỉ mỉ"},
+    {"word": "ubiquitous",      "definition": "Present, appearing, or found everywhere",               "hint": "Seemingly everywhere",                 "cefr_level": "C2", "category": "adjectives", "letter_count": 10, "xp_value": 35, "ipa_pronunciation": "/juːˈbɪkwɪtəs/",     "example_sentence": "Smartphones have become ubiquitous in urban life.",     "synonyms": ["omnipresent", "pervasive"],     "vietnamese_translation": "có mặt khắp nơi"},
+    {"word": "unequivocal",     "definition": "Leaving no doubt; clear and unambiguous",                "hint": "Completely clear and certain",         "cefr_level": "C2", "category": "adjectives", "letter_count": 11, "xp_value": 35, "ipa_pronunciation": "/ˌʌnɪˈkwɪvəkl/",    "example_sentence": "The committee gave its unequivocal support to the plan.","synonyms": ["unambiguous", "definite"],       "vietnamese_translation": "rõ ràng, dứt khoát"},
+    {"word": "juxtapose",       "definition": "To place things together to emphasize their contrast",   "hint": "Place side by side for comparison",    "cefr_level": "C2", "category": "verbs",      "letter_count": 9,  "xp_value": 35, "ipa_pronunciation": "/ˌdʒʌkstəˈpəʊz/",   "example_sentence": "The exhibition juxtaposes modern photographs with ancient maps.", "synonyms": ["contrast", "compare"],     "vietnamese_translation": "đặt cạnh nhau để đối chiếu"},
+    {"word": "ephemeral",       "definition": "Lasting for only a very short time",                      "hint": "Brief and short-lived",                "cefr_level": "C2", "category": "adjectives", "letter_count": 9,  "xp_value": 35, "ipa_pronunciation": "/ɪˈfemərəl/",       "example_sentence": "Online fame can be surprisingly ephemeral.",             "synonyms": ["transient", "fleeting"],        "vietnamese_translation": "ngắn ngủi"},
+    {"word": "idiosyncratic",   "definition": "Distinctive or peculiar to an individual",               "hint": "Unique to one person or thing",        "cefr_level": "C2", "category": "adjectives", "letter_count": 13, "xp_value": 35, "ipa_pronunciation": "/ˌɪdiəsɪŋˈkrætɪk/", "example_sentence": "Her idiosyncratic writing style is instantly recognizable.", "synonyms": ["distinctive", "peculiar"], "vietnamese_translation": "đặc trưng riêng"},
 ]
 
 # ── Hangman Fallback Words ─────────────────────────────────────────────────────
@@ -128,6 +251,8 @@ HANGMAN_FALLBACK_WORDS = [
     {"word": "travel",  "category": "travel",    "hint": "What tourists do",            "definition": "To go from one place to another",                 "letter_count": 6,  "xp_value": 10, "cefr_level": "A2"},
     {"word": "museum",  "category": "travel",    "hint": "Cultural place to visit",     "definition": "A building displaying objects of history or art", "letter_count": 6,  "xp_value": 10, "cefr_level": "A2"},
     {"word": "journey", "category": "travel",    "hint": "A long trip",                 "definition": "An act of traveling from one place to another",   "letter_count": 7,  "xp_value": 20, "cefr_level": "B2"},
+    {"word": "ambiguous", "category": "adjectives", "hint": "Open to several meanings", "definition": "Open to more than one interpretation", "letter_count": 9, "xp_value": 25, "cefr_level": "C1", "example_sentence": "The contract clause was ambiguous."},
+    {"word": "meticulous", "category": "adjectives", "hint": "Extremely careful", "definition": "Showing very careful attention to detail", "letter_count": 10, "xp_value": 35, "cefr_level": "C2", "example_sentence": "The editor kept meticulous records."},
 ]
 
 # ── Fill in the Blank Question Bank ───────────────────────────────────────────
@@ -528,6 +653,80 @@ FILL_BLANK_BANK: dict = {
             "cefr_level": "B2",
         },
     ],
+    "C1": [
+        {
+            "sentence": "Not until the meeting ended ___ the scale of the problem.",
+            "options": ["did we understand", "we understood", "we did understand", "had we understood"],
+            "correct_answer": "did we understand",
+            "grammar_tip": "After a negative expression such as 'not until' is fronted, use auxiliary-subject inversion in the main clause.",
+            "cefr_level": "C1",
+        },
+        {
+            "sentence": "The committee recommended that she ___ appointed immediately.",
+            "options": ["be", "is", "was", "being"],
+            "correct_answer": "be",
+            "grammar_tip": "In formal English, verbs such as recommend can take the mandative subjunctive: that + subject + base verb.",
+            "cefr_level": "C1",
+        },
+        {
+            "sentence": "Scarcely ___ the announcement when reporters began calling.",
+            "options": ["had they made", "they had made", "did they make", "they made"],
+            "correct_answer": "had they made",
+            "grammar_tip": "Fronted 'scarcely' describing an earlier past event takes Past Perfect inversion and is followed by 'when'.",
+            "cefr_level": "C1",
+        },
+        {
+            "sentence": "It is essential that every applicant ___ valid identification.",
+            "options": ["submit", "submits", "submitted", "will submit"],
+            "correct_answer": "submit",
+            "grammar_tip": "After 'it is essential that', formal English uses the mandative subjunctive base form.",
+            "cefr_level": "C1",
+        },
+        {
+            "sentence": "Only after reviewing the evidence ___ its significance.",
+            "options": ["did the jury recognize", "the jury recognized", "had the jury recognized", "the jury did recognize"],
+            "correct_answer": "did the jury recognize",
+            "grammar_tip": "When 'only after' is fronted, the main clause requires auxiliary-subject inversion.",
+            "cefr_level": "C1",
+        },
+    ],
+    "C2": [
+        {
+            "sentence": "Were it not for her intervention, the negotiations ___ collapsed.",
+            "options": ["would have", "will have", "had", "would"],
+            "correct_answer": "would have",
+            "grammar_tip": "'Were it not for' is an inverted formal conditional; a past unreal result takes would have + past participle.",
+            "cefr_level": "C2",
+        },
+        {
+            "sentence": "No sooner ___ the ruling than both parties filed an appeal.",
+            "options": ["had the court issued", "the court had issued", "did the court issue", "the court issued"],
+            "correct_answer": "had the court issued",
+            "grammar_tip": "Fronted 'no sooner' takes Past Perfect inversion and pairs with 'than'.",
+            "cefr_level": "C2",
+        },
+        {
+            "sentence": "Much as I ___ the proposal's ambition, its costs remain prohibitive.",
+            "options": ["admire", "am admiring", "admired", "would admire"],
+            "correct_answer": "admire",
+            "grammar_tip": "'Much as + subject + verb' forms a concessive clause meaning 'although'. Use the tense required by the present context.",
+            "cefr_level": "C2",
+        },
+        {
+            "sentence": "So intricate ___ that even specialists disagreed about its meaning.",
+            "options": ["was the clause", "the clause was", "did the clause", "had the clause been"],
+            "correct_answer": "was the clause",
+            "grammar_tip": "Fronted 'so + adjective' triggers subject-verb inversion: so intricate was the clause that...",
+            "cefr_level": "C2",
+        },
+        {
+            "sentence": "___ the evidence presented, the panel declined to revise its decision.",
+            "options": ["Notwithstanding", "Whereas", "Unless", "Albeit"],
+            "correct_answer": "Notwithstanding",
+            "grammar_tip": "'Notwithstanding' can precede a noun phrase and means 'despite'. The other conjunctions require different clause structures.",
+            "cefr_level": "C2",
+        },
+    ],
 }
 
 # ── Grammar Quiz Question Bank ────────────────────────────────────────────────
@@ -910,6 +1109,90 @@ GRAMMAR_QUIZ_BANK: dict = {
             "cefr_level": "B2",
         },
     ],
+    "C1": [
+        {
+            "question": "Rarely ___ such a carefully argued report.",
+            "options": ["have I read", "I have read", "did I read", "I read"],
+            "correct_answer": "have I read",
+            "explanation": "A fronted negative-frequency adverb triggers inversion; Present Perfect fits an experience up to now.",
+            "topic": "inversion",
+            "cefr_level": "C1",
+        },
+        {
+            "question": "The director insisted that the figures ___ independently verified.",
+            "options": ["be", "are", "were", "being"],
+            "correct_answer": "be",
+            "explanation": "Formal mandative subjunctive: insist that + subject + base verb; the passive form is 'be verified'.",
+            "topic": "subjunctive",
+            "cefr_level": "C1",
+        },
+        {
+            "question": "Only when the data were reanalysed ___ the error.",
+            "options": ["did researchers detect", "researchers detected", "had researchers detected", "researchers did detect"],
+            "correct_answer": "did researchers detect",
+            "explanation": "Fronted 'only when' requires inversion in the main clause: did + subject + base verb.",
+            "topic": "inversion",
+            "cefr_level": "C1",
+        },
+        {
+            "question": "She speaks as though she ___ the decision herself.",
+            "options": ["had made", "made", "has made", "would make"],
+            "correct_answer": "had made",
+            "explanation": "For an unreal comparison about an earlier past action, 'as though' takes the Past Perfect.",
+            "topic": "unreal_forms",
+            "cefr_level": "C1",
+        },
+        {
+            "question": "The policy is believed ___ unintended consequences.",
+            "options": ["to have caused", "to cause", "causing", "to be caused"],
+            "correct_answer": "to have caused",
+            "explanation": "After a passive reporting verb, use a perfect infinitive for an action believed to have happened earlier.",
+            "topic": "reporting_passive",
+            "cefr_level": "C1",
+        },
+    ],
+    "C2": [
+        {
+            "question": "Had the warning been heeded, the disruption ___ avoided.",
+            "options": ["might have been", "might be", "was", "would avoid"],
+            "correct_answer": "might have been",
+            "explanation": "This is an inverted third conditional; the passive result is might have been + past participle.",
+            "topic": "advanced_conditionals",
+            "cefr_level": "C2",
+        },
+        {
+            "question": "Try as they ___, the researchers could not reproduce the result.",
+            "options": ["might", "would", "did", "had"],
+            "correct_answer": "might",
+            "explanation": "'Try as + subject + might' is a fixed concessive pattern meaning 'however hard they tried'.",
+            "topic": "concession",
+            "cefr_level": "C2",
+        },
+        {
+            "question": "Under no circumstances ___ disclosed to unauthorized staff.",
+            "options": ["should the data be", "the data should be", "the data are", "should be the data"],
+            "correct_answer": "should the data be",
+            "explanation": "A fronted negative prepositional phrase triggers auxiliary-subject inversion; the passive is should + subject + be + participle.",
+            "topic": "inversion",
+            "cefr_level": "C2",
+        },
+        {
+            "question": "The findings are inconclusive, ___ compelling they may initially appear.",
+            "options": ["however", "although", "despite", "whereas"],
+            "correct_answer": "however",
+            "explanation": "The concessive pattern is 'however + adjective + subject + may be/appear'.",
+            "topic": "concession",
+            "cefr_level": "C2",
+        },
+        {
+            "question": "Not only ___ the deadline, but it also exceeded the budget.",
+            "options": ["did the project miss", "the project missed", "had the project missed", "the project did miss"],
+            "correct_answer": "did the project miss",
+            "explanation": "Fronted 'not only' requires inversion in its clause: did + subject + base verb.",
+            "topic": "inversion",
+            "cefr_level": "C2",
+        },
+    ],
 }
 
 # ── Auto-seed helper ───────────────────────────────────────────────────────────
@@ -923,17 +1206,23 @@ async def _ensure_seeded(db: AsyncSession) -> None:
     if _seed_done:
         return
 
-    count_result = await db.execute(select(func.count()).select_from(GameWord))
-    count = count_result.scalar() or 0
-    if count > 0:
-        _seed_done = True
-        return
-
-    logger.info("game_words table is empty — seeding initial word set...")
-    for w in GAME_WORDS_SEED:
-        db.add(GameWord(**w))
-    await db.commit()
-    logger.info(f"Seeded {len(GAME_WORDS_SEED)} game words.")
+    existing_result = await db.execute(
+        select(GameWord.word, GameWord.cefr_level)
+    )
+    existing = {
+        (str(row.word).casefold(), str(row.cefr_level).upper())
+        for row in existing_result.all()
+    }
+    missing = [
+        word
+        for word in GAME_WORDS_SEED
+        if (word["word"].casefold(), word["cefr_level"].upper()) not in existing
+    ]
+    for word in missing:
+        db.add(GameWord(**word))
+    if missing:
+        await db.commit()
+        logger.info("Added %s missing project-owned game words.", len(missing))
     _seed_done = True
 
 
@@ -987,6 +1276,8 @@ async def get_word_scramble(
             "shuffled_letters": shuffled,
             "hint": w.hint,
             "definition": w.definition,
+            "example_sentence": w.example_sentence,
+            "ipa_pronunciation": w.ipa_pronunciation,
             "xp_value": w.xp_value,
             "cefr_level": w.cefr_level,
             "vietnamese_translation": w.vietnamese_translation,
@@ -1002,9 +1293,24 @@ async def get_word_scramble(
                 "id": item["word_id"],
                 "answer": item["word"],
                 "xp_value": item["xp_value"],
+                "explanation": _vocabulary_explanation(
+                    word=item["word"],
+                    definition=item["definition"],
+                    example=item.get("example_sentence"),
+                    translation=item.get("vietnamese_translation"),
+                ),
             }
             for item in items
         ],
+        content_snapshot={
+            "game": "word_scramble",
+            "cefr_level": level,
+            "timer_seconds": TIMER_BY_LEVEL.get(level, 60),
+            "base_xp_per_word": XP_BY_LEVEL.get(level, 10),
+            "streak_bonus_threshold": 3,
+            "words": items,
+            "total": len(items),
+        },
     )
 
     return {
@@ -1087,6 +1393,10 @@ async def get_matching_game(
             "word": w.word,
             "match_text": match_text,
             "variant": variant,
+            "definition": w.definition,
+            "example_sentence": w.example_sentence,
+            "vietnamese_translation": w.vietnamese_translation,
+            "synonyms": w.synonyms or [],
         })
 
     # Shuffle both columns independently
@@ -1108,10 +1418,28 @@ async def get_matching_game(
                 "xp_value": next(
                     w.xp_value for w in selected if str(w.id) == pair["word_id"]
                 ),
+                "explanation": _vocabulary_explanation(
+                    word=pair["word"],
+                    definition=pair["definition"],
+                    example=pair.get("example_sentence"),
+                    translation=pair.get("vietnamese_translation"),
+                ),
             }
             for pair in pairs
         ],
         session_metadata={"variant": variant},
+        content_snapshot={
+            "game": "matching",
+            "cefr_level": level,
+            "variant": variant,
+            "timer_seconds": timer,
+            "time_bonus_threshold": 0.5,
+            "base_xp": sum(w.xp_value for w in selected),
+            "pairs": pairs,
+            "words_column": words_column,
+            "definitions_column": definitions_column,
+            "total_pairs": len(pairs),
+        },
     )
 
     return {
@@ -1188,9 +1516,22 @@ async def get_spelling_bee(
                 "id": item["word_id"],
                 "answer": item["word"],
                 "xp_value": item["xp_value"],
+                "explanation": _vocabulary_explanation(
+                    word=item["word"],
+                    definition=item["definition"],
+                    example=item.get("example_sentence"),
+                    translation=item.get("vietnamese_translation"),
+                ),
             }
             for item in items
         ],
+        content_snapshot={
+            "game": "spelling_bee",
+            "cefr_level": level,
+            "timer_seconds": TIMER_BY_LEVEL.get(level, 90),
+            "words": items,
+            "total": len(items),
+        },
     )
 
     return {
@@ -1264,11 +1605,37 @@ async def get_hangman_word(
                     "id": str(word_obj.id),
                     "answer": word_obj.word,
                     "xp_value": word_obj.xp_value,
+                    "explanation": _vocabulary_explanation(
+                        word=word_obj.word,
+                        definition=word_obj.definition,
+                        example=word_obj.example_sentence,
+                        translation=word_obj.vietnamese_translation,
+                    ),
                 }
             ],
             session_metadata={
                 "hint_costs": [hint2_cost, hint3_cost],
                 "max_lives": 6,
+            },
+            content_snapshot={
+                "word_id": str(word_obj.id),
+                "word": word_obj.word,
+                "category": word_obj.category,
+                "hint": word_obj.hint,
+                "definition": word_obj.definition,
+                "example_sentence": word_obj.example_sentence,
+                "letter_count": word_obj.letter_count,
+                "xp_value": word_obj.xp_value,
+                "base_xp": word_obj.xp_value,
+                "max_lives": 6,
+                "vietnamese_translation": word_obj.vietnamese_translation,
+                "hints": {
+                    "hint1_free": word_obj.hint or "",
+                    "hint2_xp_cost": hint2_cost,
+                    "hint2_definition": word_obj.definition or "",
+                    "hint3_xp_cost": hint3_cost,
+                },
+                "cefr_level": word_obj.cefr_level,
             },
         )
         return {
@@ -1312,11 +1679,37 @@ async def get_hangman_word(
                 "id": fallback_word_id,
                 "answer": word_obj["word"],
                 "xp_value": word_obj["xp_value"],
+                    "explanation": _vocabulary_explanation(
+                        word=word_obj["word"],
+                        definition=word_obj["definition"],
+                        example=word_obj.get("example_sentence"),
+                        translation=word_obj.get("vietnamese_translation"),
+                    ),
             }
         ],
         session_metadata={
             "hint_costs": [hint2_cost, hint3_cost],
             "max_lives": 6,
+        },
+        content_snapshot={
+            "word_id": fallback_word_id,
+            "word": word_obj["word"],
+            "category": word_obj["category"],
+            "hint": word_obj["hint"],
+            "definition": word_obj["definition"],
+            "example_sentence": word_obj.get("example_sentence"),
+            "letter_count": word_obj["letter_count"],
+            "xp_value": word_obj["xp_value"],
+            "base_xp": word_obj["xp_value"],
+            "max_lives": 6,
+            "vietnamese_translation": word_obj.get("vietnamese_translation"),
+            "hints": {
+                "hint1_free": word_obj["hint"],
+                "hint2_xp_cost": hint2_cost,
+                "hint2_definition": word_obj["definition"],
+                "hint3_xp_cost": hint3_cost,
+            },
+            "cefr_level": word_obj["cefr_level"],
         },
     )
 
@@ -1376,6 +1769,12 @@ async def get_fill_blank(
     for i, q in enumerate(selected, start=1):
         shuffled_options = q["options"].copy()
         random.shuffle(shuffled_options)
+        explanation_detail = _choice_explanation(
+            prompt=q["sentence"],
+            options=shuffled_options,
+            correct_answer=q["correct_answer"],
+            rule=q["grammar_tip"],
+        )
 
         questions.append({
             "id": i,
@@ -1383,6 +1782,8 @@ async def get_fill_blank(
             "options": shuffled_options,
             "correct_answer": q["correct_answer"],
             "grammar_tip": q["grammar_tip"],
+            "explanation": explanation_detail["summary"],
+            "explanation_detail": explanation_detail,
             "cefr_level": q["cefr_level"],
         })
 
@@ -1396,9 +1797,18 @@ async def get_fill_blank(
                 "id": str(question["id"]),
                 "answer": question["correct_answer"],
                 "xp_value": XP_BY_LEVEL.get(level, 15),
+                "explanation": question["explanation_detail"],
             }
             for question in questions
         ],
+        content_snapshot={
+            "game": "fill_blank",
+            "cefr_level": level,
+            "timer_seconds_per_question": 15,
+            "total_xp": len(questions) * XP_BY_LEVEL.get(level, 15),
+            "questions": questions,
+            "total": len(questions),
+        },
     )
 
     return {
@@ -1453,6 +1863,12 @@ async def get_grammar_quiz(
     for i, q in enumerate(selected, start=1):
         shuffled_options = q["options"].copy()
         random.shuffle(shuffled_options)
+        explanation_detail = _choice_explanation(
+            prompt=q["question"],
+            options=shuffled_options,
+            correct_answer=q["correct_answer"],
+            rule=q["explanation"],
+        )
 
         questions.append({
             "id": i,
@@ -1460,6 +1876,7 @@ async def get_grammar_quiz(
             "options": shuffled_options,
             "correct_answer": q["correct_answer"],
             "explanation": q["explanation"],
+            "explanation_detail": explanation_detail,
             "topic": q["topic"],
             "cefr_level": q["cefr_level"],
         })
@@ -1475,10 +1892,20 @@ async def get_grammar_quiz(
                 "answer": question["correct_answer"],
                 "xp_value": XP_BY_LEVEL.get(level, 15),
                 "topic": question["topic"],
+                "explanation": question["explanation_detail"],
             }
             for question in questions
         ],
         session_metadata={"topic": topic or "mixed"},
+        content_snapshot={
+            "game": "grammar_quiz",
+            "cefr_level": level,
+            "topic": topic or "mixed",
+            "timer_seconds_per_question": 12,
+            "total_xp": len(questions) * XP_BY_LEVEL.get(level, 15),
+            "questions": questions,
+            "total": len(questions),
+        },
     )
 
     return {
@@ -1494,8 +1921,144 @@ async def get_grammar_quiz(
 
 
 # ============================================================================
-# Game Session Completion
+# Game Session Progress & Completion
 # ============================================================================
+
+@router.get(
+    "/sessions/{session_id}",
+    response_model=GameSessionProgressResponse,
+)
+async def get_game_session_progress(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = await get_game_session_for_update(
+        db,
+        session_id=session_id,
+        user_id=current_user.id,
+    )
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Game session not found.",
+        )
+    if session.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This game session belongs to another user.",
+        )
+
+    session_data = session.session_data or {}
+    expected_by_id = {
+        str(item.get("id") or ""): item
+        for item in (session_data.get("expected_items") or [])
+    }
+    answers = _stored_answer_map(session_data)
+    progress_answers = [
+        _progress_answer_response(
+            session=session,
+            expected=expected_by_id[item_id],
+            answer=answer,
+            already_submitted=True,
+        )
+        for item_id, answer in answers.items()
+        if item_id in expected_by_id
+    ]
+    progress_status = (
+        "completed"
+        if session.completed_at
+        else "expired"
+        if _game_session_expired(session)
+        else "in_progress"
+    )
+    return GameSessionProgressResponse(
+        session_id=str(session.id),
+        game_type=session.game_type,
+        cefr_level=session.cefr_level,
+        status=progress_status,
+        content=session_data.get("content_snapshot") or {},
+        answers=progress_answers,
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/answers/{item_id}",
+    response_model=GameAnswerProgressResponse,
+)
+async def save_game_answer(
+    session_id: uuid.UUID,
+    item_id: str,
+    body: GameAnswerProgressRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = await get_game_session_for_update(
+        db,
+        session_id=session_id,
+        user_id=current_user.id,
+    )
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Game session not found.",
+        )
+    if session.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This game session belongs to another user.",
+        )
+    if session.completed_at is not None or session.xp_awarded:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Completed game answers cannot be changed.",
+        )
+    if _game_session_expired(session):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Game session has expired.",
+        )
+
+    session_data = dict(session.session_data or {})
+    expected_by_id = {
+        str(item.get("id") or ""): item
+        for item in (session_data.get("expected_items") or [])
+    }
+    normalized_item_id = item_id.strip()
+    expected = expected_by_id.get(normalized_item_id)
+    if expected is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Game item not found in this session.",
+        )
+
+    stored_answers = _stored_answer_map(session_data)
+    if normalized_item_id in stored_answers:
+        stored = stored_answers[normalized_item_id]
+        if _normalize_game_answer(stored) != _normalize_game_answer(body.answer):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This answer has already been finalized.",
+            )
+        return _progress_answer_response(
+            session=session,
+            expected=expected,
+            answer=stored,
+            already_submitted=True,
+        )
+
+    stored_answers[normalized_item_id] = body.answer
+    session.session_data = {
+        **session_data,
+        "submitted_answers": stored_answers,
+    }
+    await db.commit()
+    return _progress_answer_response(
+        session=session,
+        expected=expected,
+        answer=body.answer,
+        already_submitted=False,
+    )
 
 @router.post(
     "/sessions/{session_id}/complete",
@@ -1507,7 +2070,11 @@ async def complete_game_session(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    session = await get_game_session_for_update(db, session_id=session_id)
+    session = await get_game_session_for_update(
+        db,
+        session_id=session_id,
+        user_id=current_user.id,
+    )
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1574,13 +2141,38 @@ async def complete_game_session(
     hint_costs = session_data.get("hint_costs") or []
     hint_penalty = sum(hint_costs[:body.hints_used])
 
+    persisted_answers = _stored_answer_map(session_data)
+    submitted_ids = [answer.id.strip() for answer in body.answers]
+    if len(submitted_ids) != len(set(submitted_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Duplicate answer IDs are not allowed.",
+        )
+    request_answers = {
+        answer.id.strip(): answer.answer for answer in body.answers
+    }
+    for item_id, persisted_answer in persisted_answers.items():
+        requested_answer = request_answers.get(item_id)
+        if (
+            requested_answer is not None
+            and _normalize_game_answer(requested_answer)
+            != _normalize_game_answer(persisted_answer)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Answer {item_id} has already been finalized.",
+            )
+        request_answers[item_id] = persisted_answer
+    effective_answers = [
+        {"id": item_id, "answer": answer}
+        for item_id, answer in request_answers.items()
+    ]
+
     try:
         score = score_game(
             game_type=session.game_type,
             expected_items=expected_items,
-            submitted_answers=[
-                answer.model_dump() for answer in body.answers
-            ],
+            submitted_answers=effective_answers,
             hint_penalty=hint_penalty,
         )
     except GameScoringError as exc:
@@ -1589,7 +2181,9 @@ async def complete_game_session(
             detail=str(exc),
         ) from exc
 
-    submitted_by_id = {answer.id.strip(): answer.answer for answer in body.answers}
+    submitted_by_id = {
+        answer["id"].strip(): answer["answer"] for answer in effective_answers
+    }
     for expected in expected_items:
         item_id = str(expected["id"]).strip()
         if item_id in score.incorrect_ids:
@@ -1649,9 +2243,7 @@ async def complete_game_session(
     session.completed_at = completed_at
     session.session_data = {
         **session_data,
-        "submitted_answers": [
-            answer.model_dump() for answer in body.answers
-        ],
+        "submitted_answers": effective_answers,
         "client_duration_seconds": body.client_duration_seconds,
         "hints_used": body.hints_used,
         "score_result": {

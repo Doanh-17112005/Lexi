@@ -228,19 +228,15 @@ class TestNewsUrlSafety:
         with pytest.raises(HTTPException):
             _validate_public_http_url(url)
 
-    def test_rejects_host_if_any_resolved_ip_is_private(self, monkeypatch):
+    def test_syntax_validation_does_not_duplicate_dns_resolution(self, monkeypatch):
         from app.routes.news import _validate_public_http_url
 
-        def fake_getaddrinfo(*args, **kwargs):
-            return [
-                (None, None, None, "", ("93.184.216.34", 443)),
-                (None, None, None, "", ("10.0.0.1", 443)),
-            ]
+        def unexpected_getaddrinfo(*args, **kwargs):
+            raise AssertionError("DNS must be resolved only by safe_http")
 
-        monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
+        monkeypatch.setattr("socket.getaddrinfo", unexpected_getaddrinfo)
 
-        with pytest.raises(HTTPException):
-            _validate_public_http_url("https://safe.example/image.jpg")
+        _validate_public_http_url("https://safe.example/image.jpg")
 
     @pytest.mark.asyncio
     async def test_rejects_redirect_to_private_url(self, monkeypatch):
@@ -485,11 +481,21 @@ class TestGetNews:
 
 
 # ============================================================================
-# Route Tests — GET /news/{article_id}/quiz
+# Route Tests — POST /news/{article_id}/quiz
 # ============================================================================
 
+QUIZ_ARTICLE = {
+    "title": "Solar Panels Power Local School",
+    "description": "Students learn from a new renewable energy project.",
+    "content": (
+        "A local school installed solar panels on the roof. "
+        "The project reduces electricity costs and teaches students about renewable energy. "
+        "Teachers said the panels will support science lessons throughout the year."
+    ),
+}
+
 class TestGetArticleQuiz:
-    """Tests for GET /news/{article_id}/quiz endpoint."""
+    """Tests for POST /news/{article_id}/quiz endpoint."""
 
     @pytest.mark.asyncio
     async def test_returns_quiz_structure(self, no_db_client: AsyncClient):
@@ -517,7 +523,9 @@ class TestGetArticleQuiz:
             mock_cache.get_or_fetch.return_value = mock_result
             MockCache.return_value = mock_cache
 
-            response = await no_db_client.get("/api/v1/news/article_abc123/quiz")
+            response = await no_db_client.post(
+                "/api/v1/news/article_abc123/quiz", json=QUIZ_ARTICLE
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -539,10 +547,23 @@ class TestGetArticleQuiz:
             mock_cache.get_or_fetch.return_value = mock_result
             MockCache.return_value = mock_cache
 
-            await no_db_client.get("/api/v1/news/myArticle001/quiz")
+            await no_db_client.post(
+                "/api/v1/news/myArticle001/quiz", json=QUIZ_ARTICLE
+            )
 
         call_kwargs = mock_cache.get_or_fetch.call_args.kwargs
-        assert call_kwargs["cache_key"] == "news:quiz:v2:myArticle001"
+        assert call_kwargs["cache_key"].startswith("news:quiz:v3:myArticle001:")
+        assert call_kwargs["cost"] == 0
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_real_article_text(self, no_db_client: AsyncClient):
+        response = await no_db_client.post(
+            "/api/v1/news/article123/quiz",
+            json={"title": "Only a title", "description": "", "content": ""},
+        )
+
+        assert response.status_code == 422
+        assert "real article text" in response.json()["error"]["message"].lower()
 
     @pytest.mark.asyncio
     async def test_429_on_quota_error(self, no_db_client: AsyncClient):
@@ -555,7 +576,9 @@ class TestGetArticleQuiz:
             )
             MockCache.return_value = mock_cache
 
-            response = await no_db_client.get("/api/v1/news/article123/quiz")
+            response = await no_db_client.post(
+                "/api/v1/news/article123/quiz", json=QUIZ_ARTICLE
+            )
 
         assert response.status_code == 429
 
@@ -565,23 +588,13 @@ class TestGetArticleQuiz:
 # ============================================================================
 
 class TestGenerateQuizStructure:
-    """Tests for the quiz placeholder structure returned by _generate_quiz."""
+    """Tests for the source-grounded structure returned by _generate_quiz."""
 
     @pytest.mark.asyncio
     async def test_quiz_uses_article_context_when_available(self):
         from app.routes.news import _generate_quiz
 
-        article = {
-            "title": "Solar Panels Power Local School",
-            "description": "Students learn from a new renewable energy project.",
-            "content": (
-                "A local school installed solar panels on the roof. "
-                "The project reduces electricity costs and teaches students about renewable energy. "
-                "Teachers said the panels will support science lessons throughout the year."
-            ),
-        }
-
-        quiz = await _generate_quiz("solar_school", article=article)
+        quiz = await _generate_quiz("solar_school", article=QUIZ_ARTICLE)
 
         serialized = str(quiz).lower()
         assert "solar" in serialized
@@ -590,42 +603,39 @@ class TestGenerateQuizStructure:
         assert "ai-generated" not in serialized
 
     @pytest.mark.asyncio
-    async def test_quiz_falls_back_to_article_id_without_placeholders(self):
+    async def test_quiz_rejects_article_id_without_real_context(self):
         from app.routes.news import _generate_quiz
 
-        quiz = await _generate_quiz("climate_policy_2026")
-
-        serialized = str(quiz).lower()
-        assert "option a" not in serialized
-        assert "ai-generated" not in serialized
-        assert quiz["total_questions"] == len(quiz["questions"])
+        with pytest.raises(HTTPException) as exc:
+            await _generate_quiz("climate_policy_2026")
+        assert exc.value.status_code == 422
 
     @pytest.mark.asyncio
     async def test_quiz_has_5_questions(self):
         from app.routes.news import _generate_quiz
 
-        quiz = await _generate_quiz("any_article_id")
+        quiz = await _generate_quiz("any_article_id", QUIZ_ARTICLE)
         assert len(quiz["questions"]) == 5
 
     @pytest.mark.asyncio
     async def test_quiz_has_correct_xp_reward(self):
         from app.routes.news import _generate_quiz
 
-        quiz = await _generate_quiz("any_article_id")
+        quiz = await _generate_quiz("any_article_id", QUIZ_ARTICLE)
         assert quiz["xp_reward"] == 15
 
     @pytest.mark.asyncio
     async def test_quiz_total_questions_field(self):
         from app.routes.news import _generate_quiz
 
-        quiz = await _generate_quiz("any_article_id")
+        quiz = await _generate_quiz("any_article_id", QUIZ_ARTICLE)
         assert quiz["total_questions"] == 5
 
     @pytest.mark.asyncio
     async def test_each_question_has_required_fields(self):
         from app.routes.news import _generate_quiz
 
-        quiz = await _generate_quiz("any_article_id")
+        quiz = await _generate_quiz("any_article_id", QUIZ_ARTICLE)
         for q in quiz["questions"]:
             assert "id" in q
             assert "type" in q
@@ -639,7 +649,7 @@ class TestGenerateQuizStructure:
     async def test_question_types_correct(self):
         from app.routes.news import _generate_quiz
 
-        quiz = await _generate_quiz("any_article_id")
+        quiz = await _generate_quiz("any_article_id", QUIZ_ARTICLE)
         types = [q["type"] for q in quiz["questions"]]
         assert types.count("comprehension") == 2
         assert types.count("vocabulary") == 2
@@ -649,7 +659,7 @@ class TestGenerateQuizStructure:
     async def test_correct_index_within_bounds(self):
         from app.routes.news import _generate_quiz
 
-        quiz = await _generate_quiz("any_article_id")
+        quiz = await _generate_quiz("any_article_id", QUIZ_ARTICLE)
         for q in quiz["questions"]:
             assert 0 <= q["correct_index"] < len(q["options"])
 
@@ -810,15 +820,27 @@ class TestFetchNewsFallback:
     """Tests for NewsAPI → NewsData.io fallback logic."""
 
     @pytest.mark.asyncio
-    async def test_503_when_no_keys_configured(self):
+    async def test_no_keys_uses_public_rss(self):
         from app.routes.news import _fetch_news
 
-        with patch("app.routes.news.settings") as mock_settings:
+        rss_result = {
+            "articles": [{"id": "rss-1", "title": "Real RSS article"}],
+            "total_results": 1,
+        }
+        with patch("app.routes.news.settings") as mock_settings, patch(
+            "app.routes.news._fetch_from_public_rss",
+            new_callable=AsyncMock,
+            return_value=rss_result,
+        ) as rss_mock:
             mock_settings.NEWSAPI_KEY = None
             mock_settings.NEWSDATA_KEY = None
 
-            with pytest.raises(Exception):  # HTTPException 503
-                await _fetch_news("general")
+            result = await _fetch_news(
+                "technology", page=2, page_size=5, query="grammar"
+            )
+
+        assert result == rss_result
+        rss_mock.assert_awaited_once_with("technology", 2, 5, "grammar")
 
     @pytest.mark.asyncio
     async def test_falls_back_to_newsdata_when_newsapi_fails(self):
@@ -843,3 +865,55 @@ class TestFetchNewsFallback:
         assert result["articles"][0]["id"] == "fallback_1"
         mock_newsapi.assert_called_once()
         mock_newsdata.assert_called_once()
+
+
+class TestPublicNewsRss:
+    @pytest.mark.asyncio
+    async def test_parses_searches_and_paginates_real_rss_metadata(self):
+        from app.routes.news import _fetch_from_public_rss
+
+        rss = b"""<?xml version="1.0" encoding="UTF-8"?>
+        <rss xmlns:media="http://search.yahoo.com/mrss/"><channel>
+          <item>
+            <title>First &amp; General Story</title>
+            <description><![CDATA[<p>Other topic</p>]]></description>
+            <link>https://www.bbc.co.uk/news/first</link>
+            <pubDate>Mon, 01 Jan 2024 10:00:00 GMT</pubDate>
+          </item>
+          <item>
+            <title>English learning breakthrough</title>
+            <description><![CDATA[<p>A useful grammar lesson.</p>]]></description>
+            <link>https://www.bbc.co.uk/news/second</link>
+            <pubDate>Tue, 02 Jan 2024 10:00:00 GMT</pubDate>
+            <media:thumbnail url="https://ichef.bbci.co.uk/second.jpg" />
+          </item>
+          <item>
+            <title>More education news</title>
+            <description><![CDATA[English learners practise vocabulary.]]></description>
+            <guid>https://www.bbc.co.uk/news/third</guid>
+            <enclosure type="image/jpeg" url="https://ichef.bbci.co.uk/third.jpg" />
+          </item>
+          <item><title>Missing URL is ignored</title></item>
+        </channel></rss>"""
+        response = MagicMock(content=rss)
+        response.raise_for_status = MagicMock()
+        client = AsyncMock()
+        client.get.return_value = response
+
+        with patch("app.routes.news.httpx.AsyncClient") as client_factory:
+            client_factory.return_value.__aenter__.return_value = client
+            result = await _fetch_from_public_rss(
+                "education", page=2, page_size=1, query="english"
+            )
+
+        assert result["total_results"] == 2
+        assert len(result["articles"]) == 1
+        article = result["articles"][0]
+        assert article["title"] == "More education news"
+        assert article["url"] == "https://www.bbc.co.uk/news/third"
+        assert article["image_url"] == "https://ichef.bbci.co.uk/third.jpg"
+        assert article["provider"] == "bbc_rss"
+        assert article["source_name"] == "BBC News"
+        assert article["published_at"] == ""
+        requested_url = client.get.await_args.args[0]
+        assert "education" in requested_url

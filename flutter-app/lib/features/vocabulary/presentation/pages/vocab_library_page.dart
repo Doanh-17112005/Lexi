@@ -12,7 +12,8 @@ import 'package:lexilingo_app/features/vocabulary/presentation/providers/flashca
 import 'package:lexilingo_app/features/vocabulary/presentation/screens/flashcard_review_screen.dart';
 import 'package:lexilingo_app/features/vocabulary/presentation/providers/quiz_provider.dart';
 import 'package:lexilingo_app/features/vocabulary/presentation/screens/quiz_review_screen.dart';
-import 'package:lexilingo_app/features/vocabulary/vocabulary_di.dart' as vocab_di;
+import 'package:lexilingo_app/features/vocabulary/vocabulary_di.dart'
+    as vocab_di;
 
 /// Review modes offered before launching a deck/topic study session.
 enum _ReviewMode { quiz, flashcards }
@@ -28,31 +29,97 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
   final TextEditingController _searchController = TextEditingController();
 
   static const Map<String, _TagMeta> _tagMeta = {
-    'general':    _TagMeta(labelKey: 'vocabulary.topicGeneral',  icon: Icons.hearing_rounded),
-    'travel':     _TagMeta(labelKey: 'vocabulary.topicTravel',    icon: Icons.flight),
-    'business':   _TagMeta(labelKey: 'vocabulary.topicBusiness', icon: Icons.work),
-    'daily':      _TagMeta(labelKey: 'vocabulary.topicDailyLife',  icon: Icons.coffee),
-    'science':    _TagMeta(labelKey: 'vocabulary.topicScience',   icon: Icons.science_rounded),
-    'technology': _TagMeta(labelKey: 'vocabulary.topicTechnology',  icon: Icons.devices_rounded),
-    'ielts':      _TagMeta(labelKey: 'vocabulary.tagIelts',       icon: Icons.school_rounded),
-    'academic':   _TagMeta(labelKey: 'vocabulary.tagAcademic',  icon: Icons.menu_book_rounded),
-    'health':     _TagMeta(labelKey: 'vocabulary.tagHealth',   icon: Icons.health_and_safety_rounded),
-    'food':       _TagMeta(labelKey: 'vocabulary.tagFood',    icon: Icons.restaurant_rounded),
-    'sports':     _TagMeta(labelKey: 'vocabulary.tagSports',   icon: Icons.sports_rounded),
-    'daily_life': _TagMeta(labelKey: 'vocabulary.topicDailyLife',  icon: Icons.coffee_rounded),
-    'government': _TagMeta(labelKey: 'vocabulary.tagGovernment',  icon: Icons.gavel_rounded),
-    'economics':  _TagMeta(labelKey: 'vocabulary.tagEconomics',    icon: Icons.monetization_on_rounded),
-    'education':  _TagMeta(labelKey: 'vocabulary.tagEducation',   icon: Icons.school_rounded),
-    'lesson':     _TagMeta(labelKey: 'vocabulary.tagLesson',    icon: Icons.import_contacts_rounded),
-    'philosophy': _TagMeta(labelKey: 'vocabulary.tagPhilosophy',  icon: Icons.psychology_rounded),
-    'basic_200':  _TagMeta(labelKey: 'vocabulary.tagBasic200',  icon: Icons.star_outline_rounded),
-    'nature':     _TagMeta(labelKey: 'vocabulary.tagNature',   icon: Icons.nature_people_rounded),
-    'core-vocab': _TagMeta(labelKey: 'vocabulary.tagCore',    icon: Icons.grade_rounded),
-    'auto':       _TagMeta(labelKey: 'vocabulary.tagAuto', icon: Icons.bolt_rounded),
-    'crawl':      _TagMeta(labelKey: 'vocabulary.tagCrawl',    icon: Icons.download_rounded),
-    'society':    _TagMeta(labelKey: 'vocabulary.tagSociety',     icon: Icons.people_rounded),
-    'seed':       _TagMeta(labelKey: 'vocabulary.tagSeed',        icon: Icons.spa_rounded),
-    'history':    _TagMeta(labelKey: 'vocabulary.tagHistory',    icon: Icons.history_edu_rounded),
+    'general': _TagMeta(
+      labelKey: 'vocabulary.topicGeneral',
+      icon: Icons.hearing_rounded,
+    ),
+    'travel': _TagMeta(labelKey: 'vocabulary.topicTravel', icon: Icons.flight),
+    'business': _TagMeta(
+      labelKey: 'vocabulary.topicBusiness',
+      icon: Icons.work,
+    ),
+    'daily': _TagMeta(
+      labelKey: 'vocabulary.topicDailyLife',
+      icon: Icons.coffee,
+    ),
+    'science': _TagMeta(
+      labelKey: 'vocabulary.topicScience',
+      icon: Icons.science_rounded,
+    ),
+    'technology': _TagMeta(
+      labelKey: 'vocabulary.topicTechnology',
+      icon: Icons.devices_rounded,
+    ),
+    'ielts': _TagMeta(
+      labelKey: 'vocabulary.tagIelts',
+      icon: Icons.school_rounded,
+    ),
+    'academic': _TagMeta(
+      labelKey: 'vocabulary.tagAcademic',
+      icon: Icons.menu_book_rounded,
+    ),
+    'health': _TagMeta(
+      labelKey: 'vocabulary.tagHealth',
+      icon: Icons.health_and_safety_rounded,
+    ),
+    'food': _TagMeta(
+      labelKey: 'vocabulary.tagFood',
+      icon: Icons.restaurant_rounded,
+    ),
+    'sports': _TagMeta(
+      labelKey: 'vocabulary.tagSports',
+      icon: Icons.sports_rounded,
+    ),
+    'daily_life': _TagMeta(
+      labelKey: 'vocabulary.topicDailyLife',
+      icon: Icons.coffee_rounded,
+    ),
+    'government': _TagMeta(
+      labelKey: 'vocabulary.tagGovernment',
+      icon: Icons.gavel_rounded,
+    ),
+    'economics': _TagMeta(
+      labelKey: 'vocabulary.tagEconomics',
+      icon: Icons.monetization_on_rounded,
+    ),
+    'education': _TagMeta(
+      labelKey: 'vocabulary.tagEducation',
+      icon: Icons.school_rounded,
+    ),
+    'lesson': _TagMeta(
+      labelKey: 'vocabulary.tagLesson',
+      icon: Icons.import_contacts_rounded,
+    ),
+    'philosophy': _TagMeta(
+      labelKey: 'vocabulary.tagPhilosophy',
+      icon: Icons.psychology_rounded,
+    ),
+    'basic_200': _TagMeta(
+      labelKey: 'vocabulary.tagBasic200',
+      icon: Icons.star_outline_rounded,
+    ),
+    'nature': _TagMeta(
+      labelKey: 'vocabulary.tagNature',
+      icon: Icons.nature_people_rounded,
+    ),
+    'core-vocab': _TagMeta(
+      labelKey: 'vocabulary.tagCore',
+      icon: Icons.grade_rounded,
+    ),
+    'auto': _TagMeta(labelKey: 'vocabulary.tagAuto', icon: Icons.bolt_rounded),
+    'crawl': _TagMeta(
+      labelKey: 'vocabulary.tagCrawl',
+      icon: Icons.download_rounded,
+    ),
+    'society': _TagMeta(
+      labelKey: 'vocabulary.tagSociety',
+      icon: Icons.people_rounded,
+    ),
+    'seed': _TagMeta(labelKey: 'vocabulary.tagSeed', icon: Icons.spa_rounded),
+    'history': _TagMeta(
+      labelKey: 'vocabulary.tagHistory',
+      icon: Icons.history_edu_rounded,
+    ),
   };
 
   @override
@@ -120,11 +187,16 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
               children: [
                 // Search Bar
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   child: Container(
                     height: 48,
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(12),
                       boxShadow: [
                         BoxShadow(
@@ -139,17 +211,22 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                           padding: const EdgeInsets.only(left: 12, right: 8),
                           child: Icon(
                             Icons.search,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                         ),
                         Expanded(
                           child: TextField(
                             controller: _searchController,
+                            onChanged: vocabProvider.setSearchQuery,
                             decoration: InputDecoration(
                               hintText: 'vocabulary.searchPlaceholder'.tr(),
                               border: InputBorder.none,
                               hintStyle: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ),
@@ -160,11 +237,15 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                 ),
 
                 // Filters
+                _buildLevelFilterBar(context, vocabProvider),
                 _buildTopicFilterBar(context, vocabProvider),
 
                 // Words Header
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -182,10 +263,15 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                       ),
                       if (!vocabProvider.isLoading)
                         Text(
-                          'vocabulary.wordCount'.tr(namedArgs: {'count': '${words.length}'}),
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          'vocabulary.wordCount'.tr(
+                            namedArgs: {'count': '${words.length}'},
                           ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
                         ),
                     ],
                   ),
@@ -195,9 +281,12 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                 Expanded(
                   child: vocabProvider.isLoading
                       ? _buildSkeletonList()
+                      : vocabProvider.errorMessage != null && words.isEmpty
+                      ? _buildLoadError(context, vocabProvider)
                       : words.isEmpty
                       ? EmptyStateWidget.vocabulary(
-                          onAdd: () => _showAddWordDialog(context, vocabProvider),
+                          onAdd: () =>
+                              _showAddWordDialog(context, vocabProvider),
                         )
                       : RefreshIndicator(
                           onRefresh: () => vocabProvider.loadWords(),
@@ -233,9 +322,9 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
           // Section 1: System Topics Header
           Text(
             'vocabulary.systemTopicsHeader'.tr(),
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
 
@@ -243,12 +332,7 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-              childAspectRatio: 0.85,
-            ),
+            gridDelegate: _topicGridDelegate(context),
             itemCount: _topics.length,
             itemBuilder: (context, index) {
               final topic = _topics[index];
@@ -264,9 +348,9 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
             children: [
               Text(
                 'vocabulary.customDecksHeader'.tr(),
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               IconButton(
                 icon: const Icon(Icons.add, color: AppColors.primary),
@@ -280,12 +364,7 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-              childAspectRatio: 0.85,
-            ),
+            gridDelegate: _topicGridDelegate(context),
             itemCount: customDecks.length + 1, // +1 for the "Create Deck" card
             itemBuilder: (context, index) {
               if (index == customDecks.length) {
@@ -297,6 +376,21 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
           ),
         ],
       ),
+    );
+  }
+
+  SliverGridDelegate _topicGridDelegate(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final columns = width >= 1200
+        ? 4
+        : width >= 720
+        ? 3
+        : 2;
+    return SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: columns,
+      crossAxisSpacing: 16,
+      mainAxisSpacing: 16,
+      childAspectRatio: width >= 720 ? 1.05 : 0.85,
     );
   }
 
@@ -333,7 +427,8 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          onLongPress: () => _showDeleteDeckConfirmation(context, deck, vocabProvider),
+          onLongPress: () =>
+              _showDeleteDeckConfirmation(context, deck, vocabProvider),
           onTap: () => _startDeckStudy(context, deck),
           child: Stack(
             clipBehavior: Clip.antiAlias,
@@ -383,8 +478,16 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.white70, size: 20),
-                          onPressed: () => _showDeleteDeckConfirmation(context, deck, vocabProvider),
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.white70,
+                            size: 20,
+                          ),
+                          onPressed: () => _showDeleteDeckConfirmation(
+                            context,
+                            deck,
+                            vocabProvider,
+                          ),
                           constraints: const BoxConstraints(),
                           padding: EdgeInsets.zero,
                         ),
@@ -412,7 +515,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                     ),
                     const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
@@ -447,7 +553,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
     );
   }
 
-  Widget _buildCreateDeckCard(BuildContext context, VocabProvider vocabProvider) {
+  Widget _buildCreateDeckCard(
+    BuildContext context,
+    VocabProvider vocabProvider,
+  ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       decoration: BoxDecoration(
@@ -490,7 +599,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
     );
   }
 
-  void _showCreateDeckDialog(BuildContext context, VocabProvider vocabProvider) {
+  void _showCreateDeckDialog(
+    BuildContext context,
+    VocabProvider vocabProvider,
+  ) {
     final nameController = TextEditingController();
     final descController = TextEditingController();
     String selectedColor = '#2196F3';
@@ -544,7 +656,12 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                         itemCount: colors.length,
                         itemBuilder: (context, index) {
                           final colorHex = colors[index];
-                          final color = Color(int.parse('FF${colorHex.replaceAll('#', '')}', radix: 16));
+                          final color = Color(
+                            int.parse(
+                              'FF${colorHex.replaceAll('#', '')}',
+                              radix: 16,
+                            ),
+                          );
                           final isSelected = selectedColor == colorHex;
 
                           return GestureDetector(
@@ -565,7 +682,11 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                                     : null,
                               ),
                               child: isSelected
-                                  ? const Icon(Icons.check, color: Colors.white, size: 18)
+                                  ? const Icon(
+                                      Icons.check,
+                                      color: Colors.white,
+                                      size: 18,
+                                    )
                                   : null,
                             ),
                           );
@@ -585,7 +706,9 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                     if (nameController.text.trim().isEmpty) return;
                     final success = await vocabProvider.createDeck(
                       nameController.text.trim(),
-                      descController.text.trim().isEmpty ? null : descController.text.trim(),
+                      descController.text.trim().isEmpty
+                          ? null
+                          : descController.text.trim(),
                       selectedColor,
                     );
                     if (context.mounted) {
@@ -593,7 +716,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                       if (!success) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text(vocabProvider.errorMessage ?? 'vocabulary.createDeckFailed'.tr()),
+                            content: Text(
+                              vocabProvider.errorMessage ??
+                                  'vocabulary.createDeckFailed'.tr(),
+                            ),
                             backgroundColor: AppColors.errorBright,
                           ),
                         );
@@ -620,9 +746,7 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
       builder: (context) {
         return AlertDialog(
           title: Text('vocabulary.deleteDeckTitle'.tr()),
-          content: Text(
-            'vocabulary.deleteDeckPrompt'.tr(args: [deck.name]),
-          ),
+          content: Text('vocabulary.deleteDeckPrompt'.tr(args: [deck.name])),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -640,7 +764,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                   if (!success) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(vocabProvider.errorMessage ?? 'vocabulary.deleteDeckFailed'.tr()),
+                        content: Text(
+                          vocabProvider.errorMessage ??
+                              'vocabulary.deleteDeckFailed'.tr(),
+                        ),
                         backgroundColor: AppColors.errorBright,
                       ),
                     );
@@ -688,8 +815,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
               onTap: () => Navigator.of(sheetContext).pop(_ReviewMode.quiz),
             ),
             ListTile(
-              leading:
-                  const Icon(Icons.style_rounded, color: AppColors.primary),
+              leading: const Icon(
+                Icons.style_rounded,
+                color: AppColors.primary,
+              ),
               title: Text('vocabQuiz.modeFlashcardTitle'.tr()),
               subtitle: Text('vocabQuiz.modeFlashcardSubtitle'.tr()),
               onTap: () =>
@@ -718,7 +847,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
     );
   }
 
-  Future<void> _startDeckStudy(BuildContext context, VocabularyDeck deck) async {
+  Future<void> _startDeckStudy(
+    BuildContext context,
+    VocabularyDeck deck,
+  ) async {
     final mode = await _chooseReviewMode(context);
     if (mode == null || !context.mounted) return;
     if (mode == _ReviewMode.quiz) {
@@ -726,7 +858,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
       return;
     }
 
-    final flashcardProvider = Provider.of<FlashcardProvider>(context, listen: false);
+    final flashcardProvider = Provider.of<FlashcardProvider>(
+      context,
+      listen: false,
+    );
 
     showDialog(
       context: context,
@@ -752,9 +887,7 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
         } else {
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => const FlashcardReviewScreen(),
-            ),
+            MaterialPageRoute(builder: (_) => const FlashcardReviewScreen()),
           );
         }
       }
@@ -831,11 +964,7 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                         color: Colors.white.withValues(alpha: 0.2),
                         shape: BoxShape.circle,
                       ),
-                      child: Icon(
-                        topic.icon,
-                        color: Colors.white,
-                        size: 24,
-                      ),
+                      child: Icon(topic.icon, color: Colors.white, size: 24),
                     ),
                     const Spacer(),
                     Text(
@@ -857,7 +986,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                     ),
                     const SizedBox(height: 12),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
@@ -892,7 +1024,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
     );
   }
 
-  Future<void> _startTopicStudy(BuildContext context, _TopicConfig topic) async {
+  Future<void> _startTopicStudy(
+    BuildContext context,
+    _TopicConfig topic,
+  ) async {
     final mode = await _chooseReviewMode(context);
     if (mode == null || !context.mounted) return;
     if (mode == _ReviewMode.quiz) {
@@ -900,7 +1035,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
       return;
     }
 
-    final flashcardProvider = Provider.of<FlashcardProvider>(context, listen: false);
+    final flashcardProvider = Provider.of<FlashcardProvider>(
+      context,
+      listen: false,
+    );
 
     showDialog(
       context: context,
@@ -926,9 +1064,7 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
         } else {
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => const FlashcardReviewScreen(),
-            ),
+            MaterialPageRoute(builder: (_) => const FlashcardReviewScreen()),
           );
         }
       }
@@ -945,7 +1081,10 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
     }
   }
 
-  Widget _buildTopicFilterBar(BuildContext context, VocabProvider vocabProvider) {
+  Widget _buildTopicFilterBar(
+    BuildContext context,
+    VocabProvider vocabProvider,
+  ) {
     final availableTags = vocabProvider.availableTags;
     final selectedTag = vocabProvider.selectedTag;
 
@@ -968,13 +1107,70 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                 _tagLabel(tag),
                 selectedTag == tag,
                 icon: meta?.icon,
-                onTap: () => vocabProvider.setTagFilter(
-                  selectedTag == tag ? null : tag,
-                ),
+                onTap: () =>
+                    vocabProvider.setTagFilter(selectedTag == tag ? null : tag),
               ),
             );
           }),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLevelFilterBar(
+    BuildContext context,
+    VocabProvider vocabProvider,
+  ) {
+    const levels = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+    return SizedBox(
+      height: 44,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: [
+          _buildFilterChip(
+            'vocabulary.filterAll'.tr(),
+            vocabProvider.selectedLevel == null,
+            onTap: () => vocabProvider.setLevelFilter(null),
+          ),
+          ...levels.map(
+            (level) => Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: _buildFilterChip(
+                level,
+                vocabProvider.selectedLevel == level,
+                onTap: () => vocabProvider.setLevelFilter(level),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadError(BuildContext context, VocabProvider provider) {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_rounded, size: 48, color: colors.error),
+            const SizedBox(height: 12),
+            Text(
+              provider.errorMessage!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: provider.loadWords,
+              icon: const Icon(Icons.refresh_rounded),
+              label: Text('common.retry'.tr()),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1005,7 +1201,9 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
         decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primary
-              : (isDark ? Colors.white.withValues(alpha: 0.06) : AppColors.grey100),
+              : (isDark
+                    ? Colors.white.withValues(alpha: 0.06)
+                    : AppColors.grey100),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
@@ -1111,30 +1309,32 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                               ],
                             ),
                             const SizedBox(height: 4),
-                            Builder(builder: (context) {
-                              final displayDef = def.isEmpty
-                                  ? 'vocabulary.noDefinitionYet'.tr()
-                                  : def;
-                              return Text(
-                                displayDef,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: def.isEmpty
-                                      ? Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant
-                                            .withValues(alpha: 0.45)
-                                      : Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant,
-                                  fontSize: 14,
-                                  fontStyle: def.isEmpty
-                                      ? FontStyle.italic
-                                      : FontStyle.normal,
-                                ),
-                              );
-                            }),
+                            Builder(
+                              builder: (context) {
+                                final displayDef = def.isEmpty
+                                    ? 'vocabulary.noDefinitionYet'.tr()
+                                    : def;
+                                return Text(
+                                  displayDef,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: def.isEmpty
+                                        ? Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant
+                                              .withValues(alpha: 0.45)
+                                        : Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                    fontSize: 14,
+                                    fontStyle: def.isEmpty
+                                        ? FontStyle.italic
+                                        : FontStyle.normal,
+                                  ),
+                                );
+                              },
+                            ),
                           ],
                         ),
                       ),

@@ -56,25 +56,28 @@ void main() {
     return spy.recorded;
   }
 
-  test('sends one result per answered question, tagged by question type', () async {
-    final results = await submit(answers: {1: 1, 2: 1, 3: 0});
+  test(
+    'sends one result per answered question, tagged by question type',
+    () async {
+      final results = await submit(answers: {1: 1, 2: 1, 3: 0});
 
-    expect(results, hasLength(3));
-    expect(results[0].skill, SkillType.reading); // comprehension → reading
-    expect(results[0].isCorrect, isTrue);
-    expect(results[1].skill, SkillType.vocabulary);
-    expect(results[1].isCorrect, isFalse);
-    expect(results[2].skill, SkillType.grammar);
-    expect(results[2].isCorrect, isTrue);
+      expect(results, hasLength(3));
+      expect(results[0].skill, SkillType.reading); // comprehension → reading
+      expect(results[0].isCorrect, isTrue);
+      expect(results[1].skill, SkillType.vocabulary);
+      expect(results[1].isCorrect, isFalse);
+      expect(results[2].skill, SkillType.grammar);
+      expect(results[2].isCorrect, isTrue);
 
-    for (final result in results) {
-      expect(result.exerciseType, 'news_quiz');
-      expect(result.difficultyLevel, 'B1');
-      // The quiz is graded from the article, not from a concept the schedule
-      // knows about, so nothing here should land on the review queue.
-      expect(result.conceptId, isNull);
-    }
-  });
+      for (final result in results) {
+        expect(result.exerciseType, 'news_quiz');
+        expect(result.difficultyLevel, 'B1');
+        // The quiz is graded from the article, not from a concept the schedule
+        // knows about, so nothing here should land on the review queue.
+        expect(result.conceptId, isNull);
+      }
+    },
+  );
 
   test('skips questions the learner never answered', () async {
     final results = await submit(answers: {2: 0});
@@ -107,5 +110,5 @@ class _FakeNewsRepository extends NewsRepository {
   _FakeNewsRepository({required this.quiz});
 
   @override
-  Future<NewsQuiz?> getQuiz(String articleId) async => quiz;
+  Future<NewsQuiz?> getQuiz(NewsArticle article) async => quiz;
 }

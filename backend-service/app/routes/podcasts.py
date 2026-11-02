@@ -279,14 +279,26 @@ async def search_podcasts(
     """
     if not settings.PODCASTINDEX_KEY or not settings.PODCASTINDEX_SECRET:
         logger.warning("PodcastIndex API keys not configured, falling back to curated list.")
-        grouped = _group_curated_by_cefr()
-        proxied_curated = [_proxy_podcast_urls(p, request) for p in CURATED_PODCASTS]
+        q_normalized = q.strip().lower()
+        matching_curated = [
+            podcast for podcast in CURATED_PODCASTS
+            if q_normalized in " ".join((
+                podcast.get("title", ""),
+                podcast.get("author", ""),
+                podcast.get("description", ""),
+                " ".join(podcast.get("categories", [])),
+                podcast.get("cefr_level", ""),
+            )).lower()
+        ][:max_results]
+        proxied_curated = [
+            _proxy_podcast_urls(p, request) for p in matching_curated
+        ]
         return {
             "podcasts": proxied_curated,
             "source": "curated_fallback",
             "is_stale": False,
-            "note": "PodcastIndex API not configured. Showing curated list.",
-            "categories": grouped,
+            "note": "PodcastIndex API not configured. Searched verified curated feeds.",
+            "total": len(proxied_curated),
         }
 
     q_normalized = q.strip().lower()

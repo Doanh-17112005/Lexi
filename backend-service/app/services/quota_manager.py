@@ -62,6 +62,7 @@ class QuotaManager:
         "gutenberg": 200,       # actual: unlimited
         "dictionary": 2000,     # actual: unlimited
         "rss_feed": 500,        # RSS feeds are free — self-imposed limit
+        "books_quiz": 1000000,  # Local deterministic generation; cost is zero
     }
     
     # Threshold percentages

@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
+from google.auth.transport import requests as google_auth_requests
+from google.oauth2 import id_token as google_id_token
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +23,18 @@ from app.models.user import User
 from app.services.starter_reward_service import StarterRewardService
 
 logger = logging.getLogger(__name__)
+
+FIREBASE_CERTS_URL = (
+    "https://www.googleapis.com/robot/v1/metadata/x509/"
+    "securetoken@system.gserviceaccount.com"
+)
+
+
+def _has_explicit_firebase_credentials() -> bool:
+    return bool(
+        settings.FIREBASE_CREDENTIALS_FILE
+        or settings.FIREBASE_CREDENTIALS_JSON
+    )
 
 
 @lru_cache(maxsize=1)
@@ -41,19 +55,47 @@ def _init_firebase_app() -> None:
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Invalid FIREBASE_CREDENTIALS_JSON: %s", exc)
             raise
-    else:
-        logger.warning("Firebase credentials not provided; auth verification will fail.")
-        raise RuntimeError("Missing Firebase credentials")
+    options = {"projectId": settings.FIREBASE_PROJECT_ID}
+    if cred is not None:
+        firebase_admin.initialize_app(cred, options)
+        return
 
-    firebase_admin.initialize_app(cred, {'projectId': settings.FIREBASE_PROJECT_ID})
+    raise RuntimeError("Missing Firebase Admin credentials")
+
+
+def _verify_firebase_token_with_public_certs(id_token: str) -> Dict[str, Any]:
+    """Verify a Firebase ID token without service-account credentials."""
+    project_id = (settings.FIREBASE_PROJECT_ID or "").strip()
+    if not project_id:
+        raise RuntimeError("Missing FIREBASE_PROJECT_ID")
+
+    decoded = google_id_token.verify_token(
+        id_token,
+        google_auth_requests.Request(),
+        audience=project_id,
+        certs_url=FIREBASE_CERTS_URL,
+    )
+
+    expected_issuer = f"https://securetoken.google.com/{project_id}"
+    if decoded.get("iss") != expected_issuer:
+        raise ValueError("Invalid Firebase token issuer")
+    if not decoded.get("sub"):
+        raise ValueError("Firebase token is missing subject")
+
+    return decoded
 
 
 def verify_firebase_token(id_token: str) -> Optional[Dict[str, Any]]:
     """Verify Firebase ID token and return claims, or None if invalid."""
     try:
-        _init_firebase_app()
-        decoded = firebase_auth.verify_id_token(id_token)
-        return decoded
+        if _has_explicit_firebase_credentials():
+            _init_firebase_app()
+            return firebase_auth.verify_id_token(id_token)
+
+        # ID-token verification only needs the Firebase project id and the
+        # public Secure Token signing certificates. This keeps local OAuth
+        # usable without distributing a service-account private key.
+        return _verify_firebase_token_with_public_certs(id_token)
     except Exception as exc:  # pragma: no cover - firebase SDK errors
         logger.warning("Firebase token verification failed: %s", exc)
         return None

@@ -10,6 +10,29 @@ class GameAnswerSubmission(BaseModel):
     answer: str = Field(default="", max_length=500)
 
 
+class GameAnswerProgressRequest(BaseModel):
+    answer: str = Field(default="", max_length=500)
+
+
+class GameAnswerProgressResponse(BaseModel):
+    session_id: str
+    item_id: str
+    answer: str
+    is_correct: bool
+    correct_answer: str
+    explanation: dict[str, Any] = Field(default_factory=dict)
+    already_submitted: bool = False
+
+
+class GameSessionProgressResponse(BaseModel):
+    session_id: str
+    game_type: str
+    cefr_level: str | None = None
+    status: str
+    content: dict[str, Any] = Field(default_factory=dict)
+    answers: list[GameAnswerProgressResponse] = Field(default_factory=list)
+
+
 class GameSessionCompleteRequest(BaseModel):
     answers: list[GameAnswerSubmission] = Field(default_factory=list)
     client_duration_seconds: int | None = Field(default=None, ge=0, le=86400)

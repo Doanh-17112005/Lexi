@@ -695,6 +695,107 @@ class TestGameSessionCompletion:
         achievement_mock.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_zero_xp_completed_session_retry_is_idempotent(self):
+        from app.routes.games import complete_game_session
+        from app.schemas.games import GameSessionCompleteRequest
+
+        session = MagicMock()
+        session.id = uuid.uuid4()
+        session.user_id = uuid.uuid4()
+        session.game_type = "grammar_quiz"
+        session.completed_at = datetime.now(timezone.utc)
+        session.xp_awarded = True
+        session.correct_answers = 0
+        session.total_questions = 1
+        session.xp_earned = 0
+        session.duration_seconds = 30
+        session.session_data = {
+            "score_result": {"raw_xp": 0, "penalties": 0, "base_xp": 0}
+        }
+        user = MagicMock()
+        user.id = session.user_id
+        existing_award = MagicMock()
+        existing_award.xp_awarded = 0
+        existing_award.base_xp = 0
+        existing_award.to_dict.return_value = {
+            "xp_awarded": 0,
+            "base_xp": 0,
+            "new_total_xp": 100,
+        }
+
+        with patch(
+            "app.routes.games.get_game_session_for_update",
+            new_callable=AsyncMock,
+            return_value=session,
+        ), patch(
+            "app.routes.games.get_existing_xp_award",
+            new_callable=AsyncMock,
+            return_value=existing_award,
+        ) as existing_mock, patch(
+            "app.routes.games.award_xp_transaction",
+            new_callable=AsyncMock,
+        ) as award_mock:
+            response = await complete_game_session(
+                session_id=session.id,
+                body=GameSessionCompleteRequest(),
+                db=MagicMock(),
+                current_user=user,
+            )
+
+        assert response.award_status == "already_awarded"
+        assert response.xp_awarded == 0
+        assert response.base_xp == 0
+        existing_mock.assert_awaited_once()
+        award_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rejects_duplicate_answer_ids_before_scoring(self):
+        from fastapi import HTTPException
+        from app.routes.games import complete_game_session
+        from app.schemas.games import GameSessionCompleteRequest
+
+        session = MagicMock()
+        session.id = uuid.uuid4()
+        session.user_id = uuid.uuid4()
+        session.game_type = "grammar_quiz"
+        session.started_at = datetime.now(timezone.utc) - timedelta(seconds=20)
+        session.created_at = session.started_at
+        session.completed_at = None
+        session.xp_awarded = False
+        session.session_data = {
+            "expected_items": [{"id": "1", "answer": "is", "xp_value": 10}]
+        }
+        user = MagicMock()
+        user.id = session.user_id
+        db = MagicMock()
+        db.commit = AsyncMock()
+
+        with patch(
+            "app.routes.games.get_game_session_for_update",
+            new_callable=AsyncMock,
+            return_value=session,
+        ), patch(
+            "app.routes.games.score_game",
+        ) as score_mock:
+            with pytest.raises(HTTPException) as exc_info:
+                await complete_game_session(
+                    session_id=session.id,
+                    body=GameSessionCompleteRequest(
+                        answers=[
+                            {"id": "1", "answer": "is"},
+                            {"id": "1", "answer": "wrong"},
+                        ]
+                    ),
+                    db=db,
+                    current_user=user,
+                )
+
+        assert exc_info.value.status_code == 400
+        assert "Duplicate answer IDs" in exc_info.value.detail
+        score_mock.assert_not_called()
+        db.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_rejects_expired_session(self):
         from fastapi import HTTPException
         from app.routes.games import complete_game_session

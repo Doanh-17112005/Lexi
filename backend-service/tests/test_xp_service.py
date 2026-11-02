@@ -229,6 +229,82 @@ async def test_item_multiplier_below_one_does_not_reduce_xp():
     assert result.xp_awarded == 10
 
 
+@pytest.mark.parametrize(
+    ("base_xp", "daily_xp", "expected_base", "message_fragment"),
+    [
+        (10, 500, 10, "Daily XP cap"),
+        (0, 0, 0, "No XP earned"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_zero_xp_with_source_id_still_writes_idempotency_transaction(
+    base_xp: int,
+    daily_xp: int,
+    expected_base: int,
+    message_fragment: str,
+) -> None:
+    """Cap-zero and base-zero awards both reserve their source_id."""
+    user = _make_user()
+    daily = _make_daily(daily_xp)
+    leaderboard = SimpleNamespace(xp_earned=0, league="bronze")
+    db = _make_db(
+        _result(scalar_one_or_none=user),
+        _result(scalar_one_or_none=None),
+        _result(scalar_one_or_none=daily),
+        _result(scalar_one_or_none=leaderboard),
+    )
+
+    result = await award_xp_transaction(
+        db=db,
+        user=user,
+        source="game",
+        base_xp=base_xp,
+        source_id="zero-xp-session",
+        daily_xp_loader=AsyncMock(return_value=daily_xp),
+        streak_loader=AsyncMock(return_value=0),
+    )
+
+    transactions = [
+        call.args[0]
+        for call in db.add.call_args_list
+        if call.args[0].__class__.__name__ == "XPTransaction"
+    ]
+    assert result.xp_awarded == 0
+    assert result.base_xp == expected_base
+    assert message_fragment in result.message
+    assert len(transactions) == 1
+    assert transactions[0].amount == 0
+    assert transactions[0].base_amount == expected_base
+    assert transactions[0].source_id == "zero-xp-session"
+    assert user.total_xp == 0
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_zero_xp_source_id_retry_is_rejected_as_duplicate() -> None:
+    user = _make_user()
+    existing_transaction_id = uuid.uuid4()
+    db = _make_db(
+        _result(scalar_one_or_none=user),
+        _result(scalar_one_or_none=existing_transaction_id),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await award_xp_transaction(
+            db=db,
+            user=user,
+            source="game",
+            base_xp=0,
+            source_id="zero-xp-session",
+            daily_xp_loader=AsyncMock(return_value=0),
+            streak_loader=AsyncMock(return_value=0),
+        )
+
+    assert exc_info.value.status_code == 409
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
 # ── Task 5: source_id requirement for repeat-sensitive sources ────────────────
 
 @pytest.mark.parametrize("source", sorted(REPEAT_SENSITIVE_SOURCES))

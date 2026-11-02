@@ -61,6 +61,20 @@ async def test_fetch_forwards_quota_cost(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ttl", [0, -1])
+async def test_warm_redis_skips_non_positive_ttl(monkeypatch, ttl):
+    service = APICacheService(db=object())
+    get_instance = AsyncMock(
+        side_effect=AssertionError("Redis should not be opened for a disabled TTL")
+    )
+    monkeypatch.setattr(api_cache_service.RedisClient, "get_instance", get_instance)
+
+    await service._warm_redis("api-cache:books:quiz:v2:example", "{}", ttl)
+
+    get_instance.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_failed_cache_write_does_not_poison_session(monkeypatch):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:

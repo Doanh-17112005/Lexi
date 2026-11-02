@@ -13,6 +13,8 @@ import 'package:lexilingo_app/features/games/presentation/screens/game_result_sc
 import 'package:lexilingo_app/features/games/presentation/widgets/game_load_state.dart';
 import 'package:lexilingo_app/features/games/presentation/widgets/game_powerup_tray.dart';
 
+import 'package:lexilingo_app/features/games/presentation/widgets/game_answer_explanation.dart';
+
 const _hangmanPowerUps = [
   ShopItemEntity.effectRevealHint,
   ShopItemEntity.effectTranslateHint,
@@ -47,6 +49,10 @@ class _HangmanScreenState extends State<HangmanScreen>
   String? _revealedHint;
   String? _translationReveal;
   bool _isFinishing = false;
+  bool _isSavingAnswer = false;
+  bool _answerFinalized = false;
+  String? _answerSaveError;
+  GameExplanation? _answerExplanation;
   bool _shieldActive = false;
   int _extraLives = 0;
 
@@ -61,8 +67,18 @@ class _HangmanScreenState extends State<HangmanScreen>
         if (mounted) {
           final game = context.read<GamesProvider>().hangman;
           if (game != null) {
+            final feedback = context
+                .read<GamesProvider>()
+                .sessionAnswers[game.wordId];
             setState(() {
               _gameLoaded = true;
+              if (feedback != null) {
+                _gameOver = true;
+                _gameWon = feedback.isCorrect;
+                _answerFinalized = true;
+                _answerExplanation = feedback.explanation;
+                _guessedLetters.addAll(_wordLetters(game));
+              }
             });
           }
         }
@@ -105,18 +121,22 @@ class _HangmanScreenState extends State<HangmanScreen>
         _gameOver = true;
         _gameWon = false;
       });
-      _finishGame(game);
+      _finalizeAnswer(game);
     } else if (_isWordGuessed(game)) {
       setState(() {
         _gameOver = true;
         _gameWon = true;
       });
       _confettiController.play();
-      _finishGame(game);
+      _finalizeAnswer(game);
     }
   }
 
-  void _onPowerUpUsed(String itemType, Map<String, dynamic> effects, HangmanGame game) {
+  void _onPowerUpUsed(
+    String itemType,
+    Map<String, dynamic> effects,
+    HangmanGame game,
+  ) {
     if (_gameOver) return;
     switch (itemType) {
       case ShopItemEntity.effectRevealHint:
@@ -133,7 +153,7 @@ class _HangmanScreenState extends State<HangmanScreen>
             _gameWon = true;
           });
           _confettiController.play();
-          _finishGame(game);
+          _finalizeAnswer(game);
         }
         break;
       case ShopItemEntity.effectTranslateHint:
@@ -155,7 +175,7 @@ class _HangmanScreenState extends State<HangmanScreen>
           }
         });
         _confettiController.play();
-        _finishGame(game);
+        _finalizeAnswer(game);
         break;
     }
   }
@@ -195,8 +215,43 @@ class _HangmanScreenState extends State<HangmanScreen>
         _gameWon = true;
       });
       _confettiController.play();
-      _finishGame(game);
+      _finalizeAnswer(game);
     }
+  }
+
+  Future<void> _finalizeAnswer(HangmanGame game) async {
+    if (_answerFinalized || _isSavingAnswer) return;
+    final submittedAnswer = _gameWon ? game.word : '';
+    setState(() {
+      _isSavingAnswer = true;
+      _answerSaveError = null;
+      _answerExplanation = GameExplanation(
+        summary: '${'games.correctAnswer'.tr()}: ${game.word}',
+        rule: game.hints.hint2Definition,
+        example: game.vietnameseTranslation ?? game.hints.hint1Free,
+      );
+    });
+    final feedback = await context.read<GamesProvider>().saveAnswer(
+      sessionId: game.sessionId,
+      itemId: game.wordId,
+      answer: submittedAnswer,
+    );
+    if (!mounted) return;
+    setState(() {
+      _isSavingAnswer = false;
+      if (feedback == null) {
+        _answerSaveError = 'save_failed';
+        return;
+      }
+      _answerFinalized = true;
+      _gameWon = feedback.isCorrect;
+      _answerExplanation = feedback.explanation;
+      _answerSaveError = null;
+    });
+  }
+
+  void _retryAnswerSave(HangmanGame game) {
+    _finalizeAnswer(game);
   }
 
   Future<void> _abandonGame() async {
@@ -228,16 +283,18 @@ class _HangmanScreenState extends State<HangmanScreen>
         score: 0,
         totalQuestions: 1,
         correctAnswers: 0,
-        answers: [{'id': game.wordId, 'answer': ''}],
+        answers: [
+          {'id': game.wordId, 'answer': ''},
+        ],
       );
     }
     if (mounted) Navigator.of(context).pop();
   }
 
   Future<void> _finishGame(HangmanGame game) async {
-    if (_isFinishing) return;
+    if (_isFinishing || !_answerFinalized || _answerSaveError != null) return;
     _isFinishing = true;
-    await Future.delayed(const Duration(milliseconds: 900));
+    // Proceed immediately on user action
     if (!mounted) return;
     final provider = context.read<GamesProvider>();
     final correctAnswers = _gameWon ? 1 : 0;
@@ -247,10 +304,7 @@ class _HangmanScreenState extends State<HangmanScreen>
       totalQuestions: 1,
       correctAnswers: correctAnswers,
       answers: [
-        {
-          'id': game.wordId,
-          'answer': _gameWon ? game.word : '',
-        },
+        {'id': game.wordId, 'answer': _gameWon ? game.word : ''},
       ],
       hintsUsed: (_hint2Used ? 1 : 0) + (_hint3Used ? 1 : 0),
     );
@@ -283,339 +337,385 @@ class _HangmanScreenState extends State<HangmanScreen>
         if (!didPop) _abandonGame();
       },
       child: Stack(
-      alignment: Alignment.topCenter,
-      children: [
-        Consumer<GamesProvider>(
-          builder: (context, provider, _) {
-            if (provider.isLoading) {
-              return const Scaffold(
-                body: Center(child: LottieLoadingWidget.medium()),
-              );
-            }
-            final game = provider.hangman;
-            if (provider.error != null) {
-              return GameLoadState(
-                message: 'games.loadFailed'.tr(),
-                onRetry: () async {
-                  await provider.loadHangman();
-                  if (!mounted) return;
-                  final loaded = provider.hangman;
-                  if (loaded != null) {
-                    setState(() {
-                      _gameLoaded = true;
-                    });
-                  }
-                },
-              );
-            }
-            if (game == null || game.word.isEmpty) {
-              return GameLoadState(
-                message: 'games.emptyGame'.tr(),
-                onRetry: () async {
-                  await provider.loadHangman();
-                  if (!mounted) return;
-                  final loaded = provider.hangman;
-                  if (loaded != null) {
-                    setState(() {
-                      _gameLoaded = true;
-                    });
-                  }
-                },
-              );
-            }
-            if (!_gameLoaded) {
-              return const Scaffold(
-                body: Center(child: LottieLoadingWidget.medium()),
-              );
-            }
-            final word = _wordLetters(game);
+        alignment: Alignment.topCenter,
+        children: [
+          Consumer<GamesProvider>(
+            builder: (context, provider, _) {
+              if (provider.isLoading) {
+                return const Scaffold(
+                  body: Center(child: LottieLoadingWidget.medium()),
+                );
+              }
+              final game = provider.hangman;
+              if (provider.error != null) {
+                return GameLoadState(
+                  message: 'games.loadFailed'.tr(),
+                  onRetry: () async {
+                    await provider.loadHangman();
+                    if (!mounted) return;
+                    final loaded = provider.hangman;
+                    if (loaded != null) {
+                      setState(() {
+                        _gameLoaded = true;
+                      });
+                    }
+                  },
+                );
+              }
+              if (game == null || game.word.isEmpty) {
+                return GameLoadState(
+                  message: 'games.emptyGame'.tr(),
+                  onRetry: () async {
+                    await provider.loadHangman();
+                    if (!mounted) return;
+                    final loaded = provider.hangman;
+                    if (loaded != null) {
+                      setState(() {
+                        _gameLoaded = true;
+                      });
+                    }
+                  },
+                );
+              }
+              if (!_gameLoaded) {
+                return const Scaffold(
+                  body: Center(child: LottieLoadingWidget.medium()),
+                );
+              }
+              final word = _wordLetters(game);
 
-            return Scaffold(
-              appBar: AppBar(
-                backgroundColor: Theme.of(context).colorScheme.surface,
-                elevation: 0,
-                title: Text(
-                  'hangman.title'.tr(),
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface,
+              return Scaffold(
+                appBar: AppBar(
+                  backgroundColor: Theme.of(context).colorScheme.surface,
+                  elevation: 0,
+                  title: Text(
+                    'hangman.title'.tr(),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
                   ),
+                  actions: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Row(
+                        children: List.generate(
+                          _effectiveMaxLives(game),
+                          (i) => Icon(
+                            Icons.favorite,
+                            color: i < _effectiveMaxLives(game) - _wrongGuesses
+                                ? AppColors.errorBright
+                                : AppColors.grey300,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                actions: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Row(
-                      children: List.generate(
-                        _effectiveMaxLives(game),
-                        (i) => Icon(
-                          Icons.favorite,
-                          color: i < _effectiveMaxLives(game) - _wrongGuesses
-                              ? AppColors.errorBright
-                              : AppColors.grey300,
-                          size: 18,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              body: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    child: GamePowerUpTray(
-                      availableTypes: _hangmanPowerUps,
-                      enabled: !_gameOver,
-                      onUse: (type, effects) =>
-                          _onPowerUpUsed(type, effects, game),
-                    ),
-                  ),
-                  if (_shieldActive)
+                body: Column(
+                  children: [
                     Padding(
-                      padding: EdgeInsets.only(bottom: 6),
-                      child: ActivePowerUpBadge(
-                        itemType: ShopItemEntity.effectMistakeShield,
-                        label: 'games.shieldActive'.tr(),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      child: GamePowerUpTray(
+                        availableTypes: _hangmanPowerUps,
+                        enabled: !_gameOver,
+                        onUse: (type, effects) =>
+                            _onPowerUpUsed(type, effects, game),
                       ),
                     ),
-                  if (_translationReveal != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        margin: const EdgeInsets.only(bottom: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.purple.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: AppColors.purple.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.translate_rounded,
-                              size: 14,
-                              color: AppColors.purple,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                _translationReveal!,
-                                style: const TextStyle(fontSize: 13),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ],
+                    if (_shieldActive)
+                      Padding(
+                        padding: EdgeInsets.only(bottom: 6),
+                        child: ActivePowerUpBadge(
+                          itemType: ShopItemEntity.effectMistakeShield,
+                          label: 'games.shieldActive'.tr(),
                         ),
                       ),
-                    ),
-                  // Category chip
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    child: Row(
-                      children: [
-                        Chip(
-                          label: Text(
-                            game.category.isEmpty
-                                ? 'hangman.defaultCategory'.tr()
-                                : game.category,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.primary,
-                            ),
-                          ),
-                          backgroundColor: AppColors.primary.withValues(
-                            alpha: 0.1,
-                          ),
-                          side: const BorderSide(color: AppColors.primary),
-                        ),
-                        const Spacer(),
-                        Text(
-                          'hangman.livesLeftLabel'.tr(
-                            namedArgs: {
-                              'lives':
-                                  '${_effectiveMaxLives(game) - _wrongGuesses}',
-                            },
-                          ),
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Hangman figure
-                  HangmanFigure(wrongGuesses: _wrongGuesses),
-                  const SizedBox(height: 8),
-                  // Hint reveal
-                  if (_revealedHint != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.accentYellow.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: AppColors.accentYellow),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.lightbulb_outline_rounded,
-                              size: 14,
-                              color: AppColors.accentYellow,
-                            ),
-                            const SizedBox(width: 6),
-                            Flexible(
-                              child: Text(
-                                _revealedHint!,
-                                style: const TextStyle(fontSize: 13),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  // Word blanks
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 4,
-                      children: word.map((letter) {
-                        if (letter == ' ') {
-                          return const SizedBox(width: 16);
-                        }
-                        final revealed = _guessedLetters.contains(letter);
-                        return Container(
-                          width: 30,
-                          height: 38,
-                          margin: const EdgeInsets.only(bottom: 4),
+                    if (_translationReveal != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          margin: const EdgeInsets.only(bottom: 6),
                           decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
-                                color: revealed
-                                    ? AppColors.primary
-                                    : Theme.of(
-                                        context,
-                                      ).colorScheme.outlineVariant,
-                                width: 2,
-                              ),
+                            color: AppColors.purple.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: AppColors.purple.withValues(alpha: 0.4),
                             ),
                           ),
-                          alignment: Alignment.center,
-                          child: revealed
-                              ? Text(
-                                  letter,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 20,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface,
-                                  ),
-                                )
-                              : null,
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                  // Lose reveal
-                  if (_gameOver && !_gameWon)
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.translate_rounded,
+                                size: 14,
+                                color: AppColors.purple,
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  _translationReveal!,
+                                  style: const TextStyle(fontSize: 13),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    // Category chip
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Text(
-                        'hangman.wordRevealLabel'.tr(
-                          namedArgs: {'word': game.word},
-                        ),
-                        style: const TextStyle(
-                          color: AppColors.errorBright,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                        textAlign: TextAlign.center,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      child: Row(
+                        children: [
+                          Chip(
+                            label: Text(
+                              game.category.isEmpty
+                                  ? 'hangman.defaultCategory'.tr()
+                                  : game.category,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                            backgroundColor: AppColors.primary.withValues(
+                              alpha: 0.1,
+                            ),
+                            side: const BorderSide(color: AppColors.primary),
+                          ),
+                          const Spacer(),
+                          Text(
+                            'hangman.livesLeftLabel'.tr(
+                              namedArgs: {
+                                'lives':
+                                    '${_effectiveMaxLives(game) - _wrongGuesses}',
+                              },
+                            ),
+                            style: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  // Hint buttons
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 6,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _HintButton(
-                          label: 'hangman.hint1Label'.tr(),
-                          detail: 'hangman.hintFreeLabel'.tr(),
-                          used: _hint1Used,
-                          disabled: _gameOver,
-                          onTap: () => _useHint1(game),
-                          color: AppColors.greenSuccess,
+                    // Hangman figure
+                    HangmanFigure(wrongGuesses: _wrongGuesses),
+                    const SizedBox(height: 8),
+                    // Hint reveal
+                    if (_revealedHint != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.accentYellow.withValues(
+                              alpha: 0.2,
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: AppColors.accentYellow),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.lightbulb_outline_rounded,
+                                size: 14,
+                                color: AppColors.accentYellow,
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  _revealedHint!,
+                                  style: const TextStyle(fontSize: 13),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        const SizedBox(width: 8),
-                        _HintButton(
-                          label: 'hangman.hint2Label'.tr(),
-                          detail: '-${game.hints.hint2XpCost}XP',
-                          used: _hint2Used,
-                          disabled: _gameOver,
-                          onTap: () => _useHint2(game),
-                          color: AppColors.orange,
-                        ),
-                        const SizedBox(width: 8),
-                        _HintButton(
-                          label: 'hangman.hint3Label'.tr(),
-                          detail: '-${game.hints.hint3XpCost}XP',
-                          used: _hint3Used,
-                          disabled: _gameOver,
-                          onTap: () => _useHint3(game),
-                          color: AppColors.purple,
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Keyboard
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: _Keyboard(
-                        guessedLetters: _guessedLetters,
-                        wordLetters: word.toSet(),
-                        gameOver: _gameOver,
-                        onTap: (l) => _guessLetter(l, game),
+                      ),
+                    // Word blanks
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 4,
+                        children: word.map((letter) {
+                          if (letter == ' ') {
+                            return const SizedBox(width: 16);
+                          }
+                          final revealed = _guessedLetters.contains(letter);
+                          return Container(
+                            width: 30,
+                            height: 38,
+                            margin: const EdgeInsets.only(bottom: 4),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: revealed
+                                      ? AppColors.primary
+                                      : Theme.of(
+                                          context,
+                                        ).colorScheme.outlineVariant,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: revealed
+                                ? Text(
+                                    letter,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 20,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface,
+                                    ),
+                                  )
+                                : null,
+                          );
+                        }).toList(),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-        ConfettiWidget(
-          confettiController: _confettiController,
-          blastDirectionality: BlastDirectionality.explosive,
-          numberOfParticles: 25,
-          gravity: 0.3,
-          colors: const [
-            AppColors.primary,
-            AppColors.accentYellow,
-            AppColors.greenSuccess,
-            Colors.pink,
-          ],
-        ),
-      ],
+                    // Lose reveal
+                    if (_gameOver && !_gameWon)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Text(
+                          'hangman.wordRevealLabel'.tr(
+                            namedArgs: {'word': game.word},
+                          ),
+                          style: const TextStyle(
+                            color: AppColors.errorBright,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    // Hint buttons
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _HintButton(
+                            label: 'hangman.hint1Label'.tr(),
+                            detail: 'hangman.hintFreeLabel'.tr(),
+                            used: _hint1Used,
+                            disabled: _gameOver,
+                            onTap: () => _useHint1(game),
+                            color: AppColors.greenSuccess,
+                          ),
+                          const SizedBox(width: 8),
+                          _HintButton(
+                            label: 'hangman.hint2Label'.tr(),
+                            detail: '-${game.hints.hint2XpCost}XP',
+                            used: _hint2Used,
+                            disabled: _gameOver,
+                            onTap: () => _useHint2(game),
+                            color: AppColors.orange,
+                          ),
+                          const SizedBox(width: 8),
+                          _HintButton(
+                            label: 'hangman.hint3Label'.tr(),
+                            detail: '-${game.hints.hint3XpCost}XP',
+                            used: _hint3Used,
+                            disabled: _gameOver,
+                            onTap: () => _useHint3(game),
+                            color: AppColors.purple,
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Keyboard or Explanation Card when over
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: _gameOver
+                            ? SingleChildScrollView(
+                                child: Column(
+                                  children: [
+                                    GameAnswerExplanationCard(
+                                      isCorrect: _gameWon,
+                                      selectedAnswer: _gameWon
+                                          ? game.word
+                                          : 'hangman.answerRevealLabel'.tr(),
+                                      correctAnswer: game.word,
+                                      explanation:
+                                          _answerExplanation ??
+                                          GameExplanation(
+                                            summary:
+                                                "${'games.correctAnswer'.tr()}: ${game.word}",
+                                            rule: game.hints.hint2Definition,
+                                            example:
+                                                game.vietnameseTranslation ??
+                                                game.hints.hint1Free,
+                                          ),
+                                    ),
+                                    GameAnswerSaveStatus(
+                                      isSaving: _isSavingAnswer,
+                                      error: _answerSaveError,
+                                      onRetry: () => _retryAnswerSave(game),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: FilledButton.icon(
+                                        onPressed:
+                                            _isFinishing ||
+                                                _isSavingAnswer ||
+                                                !_answerFinalized ||
+                                                _answerSaveError != null
+                                            ? null
+                                            : () => _finishGame(game),
+                                        icon: const Icon(Icons.flag_rounded),
+                                        label: Text('games.finishGame'.tr()),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : _Keyboard(
+                                guessedLetters: _guessedLetters,
+                                wordLetters: word.toSet(),
+                                gameOver: _gameOver,
+                                onTap: (l) => _guessLetter(l, game),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          ConfettiWidget(
+            confettiController: _confettiController,
+            blastDirectionality: BlastDirectionality.explosive,
+            numberOfParticles: 25,
+            gravity: 0.3,
+            colors: const [
+              AppColors.primary,
+              AppColors.accentYellow,
+              AppColors.greenSuccess,
+              Colors.pink,
+            ],
+          ),
+        ],
       ),
     );
   }

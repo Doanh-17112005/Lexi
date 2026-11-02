@@ -19,6 +19,7 @@ async def create_game_session(
     expected_items: list[dict[str, Any]],
     category: str | None = None,
     session_metadata: dict[str, Any] | None = None,
+    content_snapshot: dict[str, Any] | None = None,
 ) -> GameSession:
     session = GameSession(
         id=uuid.uuid4(),
@@ -30,6 +31,8 @@ async def create_game_session(
         started_at=datetime.now(timezone.utc),
         session_data={
             "expected_items": expected_items,
+            "submitted_answers": {},
+            "content_snapshot": content_snapshot or {},
             **(session_metadata or {}),
         },
     )
@@ -42,10 +45,10 @@ async def get_game_session_for_update(
     db: AsyncSession,
     *,
     session_id: uuid.UUID,
+    user_id: uuid.UUID | None = None,
 ) -> GameSession | None:
-    result = await db.execute(
-        select(GameSession)
-        .where(GameSession.id == session_id)
-        .with_for_update()
-    )
+    query = select(GameSession).where(GameSession.id == session_id)
+    if user_id is not None:
+        query = query.where(GameSession.user_id == user_id)
+    result = await db.execute(query.with_for_update())
     return result.scalar_one_or_none()

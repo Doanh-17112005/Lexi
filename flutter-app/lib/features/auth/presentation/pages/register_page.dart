@@ -388,17 +388,36 @@ class _RegisterPageState extends State<RegisterPage> {
                                   displayName: _fullNameController.text.trim(),
                                 );
 
-                                // If registration succeeded, navigate to email verification page.
+                                // Production requires the email-verification
+                                // page. Local development can auto-verify when
+                                // SMTP is intentionally unavailable.
                                 if (authProvider.errorMessage == null &&
-                                    mounted) {
-                                  nav.pushReplacement(
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          EmailVerificationPendingPage(
-                                            email: _emailController.text.trim(),
-                                          ),
-                                    ),
-                                  );
+                                    context.mounted) {
+                                  if (authProvider
+                                      .registrationRequiresVerification) {
+                                    nav.pushReplacement(
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            EmailVerificationPendingPage(
+                                              email: _emailController.text
+                                                  .trim(),
+                                            ),
+                                      ),
+                                    );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'auth.registrationReadyToLogin'.tr(),
+                                        ),
+                                      ),
+                                    );
+                                    nav.pushReplacement(
+                                      MaterialPageRoute(
+                                        builder: (_) => const LoginPage(),
+                                      ),
+                                    );
+                                  }
                                 }
                               },
                         style: ElevatedButton.styleFrom(

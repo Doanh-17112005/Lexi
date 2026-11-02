@@ -100,7 +100,7 @@ class _FakeNewsRepository extends NewsRepository {
   final List<_Award> awards = [];
 
   @override
-  Future<NewsQuiz?> getQuiz(String articleId) async => quiz;
+  Future<NewsQuiz?> getQuiz(NewsArticle article) async => quiz;
 
   @override
   Future<void> awardQuizXp({

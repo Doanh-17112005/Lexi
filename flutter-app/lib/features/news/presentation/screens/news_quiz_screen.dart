@@ -91,6 +91,30 @@ class _NewsQuizScreenState extends State<NewsQuizScreen>
                     Text(
                       'newsQuiz.quizNotAvailable'.tr(),
                       style: TextStyle(color: AppColors.grey500, fontSize: 16),
+                      textAlign: TextAlign.center,
+                    ),
+                    if (provider.error != null) ...[
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Text(
+                          provider.error!,
+                          style: TextStyle(
+                            color: AppColors.grey500,
+                            fontSize: 13,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: () => provider.loadQuiz(
+                        widget.article.id,
+                        article: widget.article,
+                      ),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text('common.retry'.tr()),
                     ),
                   ],
                 ),

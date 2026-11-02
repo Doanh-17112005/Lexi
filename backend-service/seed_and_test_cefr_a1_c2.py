@@ -173,23 +173,23 @@ CEFR_COURSES = [
 # ── 2. DỮ LIỆU TỪ VỰNG CHUẨN CEFR TỪ A1 -> C2 ──────────────────────────────
 CEFR_VOCABULARY = [
     # A1
-    {"word": "family", "phonetic": "/ˈfæm.əl.i/", "meaning": "Gia đình", "level": "A1", "part_of_speech": "noun", "example": "I love spending weekends with my family."},
-    {"word": "happy", "phonetic": "/ˈhæp.i/", "meaning": "Hạnh phúc, vui vẻ", "level": "A1", "part_of_speech": "adjective", "example": "She looks very happy today."},
+    {"word": "family", "definition": "A group of people who are related to one another.", "phonetic": "/ˈfæm.əl.i/", "meaning": "Gia đình", "level": "A1", "part_of_speech": "noun", "example": "I love spending weekends with my family."},
+    {"word": "happy", "definition": "Feeling or showing pleasure or contentment.", "phonetic": "/ˈhæp.i/", "meaning": "Hạnh phúc, vui vẻ", "level": "A1", "part_of_speech": "adjective", "example": "She looks very happy today."},
     # A2
-    {"word": "journey", "phonetic": "/ˈdʒɜː.ni/", "meaning": "Chuyến đi, cuộc hành trình", "level": "A2", "part_of_speech": "noun", "example": "The train journey took three hours."},
-    {"word": "polite", "phonetic": "/pəˈlaɪt/", "meaning": "Lịch sự, lễ phép", "level": "A2", "part_of_speech": "adjective", "example": "He is always polite to his teachers."},
+    {"word": "journey", "definition": "An act of travelling from one place to another.", "phonetic": "/ˈdʒɜː.ni/", "meaning": "Chuyến đi, cuộc hành trình", "level": "A2", "part_of_speech": "noun", "example": "The train journey took three hours."},
+    {"word": "polite", "definition": "Showing good manners and respect for other people.", "phonetic": "/pəˈlaɪt/", "meaning": "Lịch sự, lễ phép", "level": "A2", "part_of_speech": "adjective", "example": "He is always polite to his teachers."},
     # B1
-    {"word": "opportunity", "phonetic": "/ˌɒp.əˈtʃuː.nə.ti/", "meaning": "Cơ hội thuận lợi", "level": "B1", "part_of_speech": "noun", "example": "Studying abroad is a wonderful opportunity."},
-    {"word": "convenient", "phonetic": "/kənˈviː.ni.ənt/", "meaning": "Tiện lợi, thuận tiện", "level": "B1", "part_of_speech": "adjective", "example": "The hotel is in a convenient location."},
+    {"word": "opportunity", "definition": "A situation that makes it possible to do something useful or desirable.", "phonetic": "/ˌɒp.əˈtʃuː.nə.ti/", "meaning": "Cơ hội thuận lợi", "level": "B1", "part_of_speech": "noun", "example": "Studying abroad is a wonderful opportunity."},
+    {"word": "convenient", "definition": "Suitable for your needs and causing little difficulty.", "phonetic": "/kənˈviː.ni.ənt/", "meaning": "Tiện lợi, thuận tiện", "level": "B1", "part_of_speech": "adjective", "example": "The hotel is in a convenient location."},
     # B2
-    {"word": "significant", "phonetic": "/sɪɡˈnɪf.ɪ.kənt/", "meaning": "Quan trọng, có ý nghĩa lớn", "level": "B2", "part_of_speech": "adjective", "example": "There has been a significant increase in sales."},
-    {"word": "collaborate", "phonetic": "/kəˈlæb.ə.reɪt/", "meaning": "Hợp tác, cộng tác làm việc", "level": "B2", "part_of_speech": "verb", "example": "Researchers from two universities collaborated on this project."},
+    {"word": "significant", "definition": "Important or large enough to have a noticeable effect.", "phonetic": "/sɪɡˈnɪf.ɪ.kənt/", "meaning": "Quan trọng, có ý nghĩa lớn", "level": "B2", "part_of_speech": "adjective", "example": "There has been a significant increase in sales."},
+    {"word": "collaborate", "definition": "To work together with someone to achieve a shared result.", "phonetic": "/kəˈlæb.ə.reɪt/", "meaning": "Hợp tác, cộng tác làm việc", "level": "B2", "part_of_speech": "verb", "example": "Researchers from two universities collaborated on this project."},
     # C1
-    {"word": "comprehensive", "phonetic": "/ˌkɒm.prɪˈhen.sɪv/", "meaning": "Toàn diện, bao quát mọi mặt", "level": "C1", "part_of_speech": "adjective", "example": "The book provides a comprehensive overview of AI."},
-    {"word": "articulate", "phonetic": "/ɑːˈtɪk.jə.lət/", "meaning": "Ăn nói lưu loát, diễn đạt rõ ràng", "level": "C1", "part_of_speech": "adjective", "example": "She gave an articulate and persuasive speech."},
+    {"word": "comprehensive", "definition": "Including all or nearly all of the relevant details or aspects.", "phonetic": "/ˌkɒm.prɪˈhen.sɪv/", "meaning": "Toàn diện, bao quát mọi mặt", "level": "C1", "part_of_speech": "adjective", "example": "The book provides a comprehensive overview of AI."},
+    {"word": "articulate", "definition": "Able to express ideas clearly and effectively.", "phonetic": "/ɑːˈtɪk.jə.lət/", "meaning": "Ăn nói lưu loát, diễn đạt rõ ràng", "level": "C1", "part_of_speech": "adjective", "example": "She gave an articulate and persuasive speech."},
     # C2
-    {"word": "ubiquitous", "phonetic": "/juːˈbɪk.wɪ.təs/", "meaning": "Phổ biến khắp nơi, ở đâu cũng có", "level": "C2", "part_of_speech": "adjective", "example": "Smartphones have become ubiquitous in modern society."},
-    {"word": "serendipity", "phonetic": "/ˌser.ənˈdɪp.ə.ti/", "meaning": "Sự tình cờ may mắn", "level": "C2", "part_of_speech": "noun", "example": "Meeting my business partner was pure serendipity."}
+    {"word": "ubiquitous", "definition": "Present, appearing, or found everywhere.", "phonetic": "/juːˈbɪk.wɪ.təs/", "meaning": "Phổ biến khắp nơi, ở đâu cũng có", "level": "C2", "part_of_speech": "adjective", "example": "Smartphones have become ubiquitous in modern society."},
+    {"word": "serendipity", "definition": "The accidental discovery of something valuable or interesting.", "phonetic": "/ˌser.ənˈdɪp.ə.ti/", "meaning": "Sự tình cờ may mắn", "level": "C2", "part_of_speech": "noun", "example": "Meeting my business partner was pure serendipity."}
 ]
 
 def parse_args():
@@ -250,7 +250,7 @@ async def seed_and_test(*, user_email=None, publish=False):
                 {
                     "word": vocab["word"],
                     "pronunciation": vocab["phonetic"],
-                    "definition": vocab["meaning"],
+                    "definition": vocab["definition"],
                     "example": vocab["example"],
                 }
                 for vocab in CEFR_VOCABULARY
@@ -360,11 +360,12 @@ async def seed_and_test(*, user_email=None, publish=False):
         vocab_added = 0
         for v in CEFR_VOCABULARY:
             v_res = await db.execute(select(VocabularyItem).where(VocabularyItem.word == v["word"]))
-            if not v_res.scalar_one_or_none():
+            existing_item = v_res.scalar_one_or_none()
+            if not existing_item:
                 v_item = VocabularyItem(
                     id=uuid.uuid4(),
                     word=v["word"],
-                    definition=v["meaning"],
+                    definition=v["definition"],
                     translation={"vi": v["meaning"], "examples": [v["example"]]},
                     pronunciation=v["phonetic"],
                     difficulty_level=getattr(DifficultyLevel, v["level"]),
@@ -372,6 +373,14 @@ async def seed_and_test(*, user_email=None, publish=False):
                 )
                 db.add(v_item)
                 vocab_added += 1
+            elif not existing_item.definition or existing_item.definition == v["meaning"]:
+                # Idempotent repair for the original seed, which accidentally
+                # copied the Vietnamese translation into the English field.
+                existing_item.definition = v["definition"]
+                existing_item.translation = {
+                    "vi": v["meaning"],
+                    "examples": [v["example"]],
+                }
         await db.commit()
         print(f"    -> Đã nạp thành công {vocab_added} từ vựng mới chuẩn A1 -> C2 vào Database.")
 

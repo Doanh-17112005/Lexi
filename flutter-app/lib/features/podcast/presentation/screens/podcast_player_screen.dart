@@ -48,6 +48,13 @@ class _PodcastPlayerScreenState extends State<PodcastPlayerScreen> {
   String? _transcript;
   bool _transcriptExpanded = false;
   bool _handlerInitializing = false;
+  bool _streamsBound = false;
+  bool _isPreparingAudio = true;
+  String? _audioError;
+  ListeningHistory? _listeningHistory;
+  Duration _lastObservedPosition = Duration.zero;
+  int _sessionListenedSeconds = 0;
+  int _lastPersistedPosition = 0;
 
   final List<StreamSubscription<dynamic>> _subs = [];
 
@@ -75,41 +82,93 @@ class _PodcastPlayerScreenState extends State<PodcastPlayerScreen> {
   }
 
   Future<void> _setupPlayer() async {
-    // Position stream
-    _subs.add(
-      _handler!.positionStream.listen((pos) {
-        if (!mounted) return;
-        setState(() => _position = pos);
-        _checkXpAward(pos);
-      }),
-    );
-
-    // Duration stream
-    _subs.add(
-      _handler!.durationStream.listen((dur) {
-        if (!mounted) return;
-        if (dur != null) setState(() => _duration = dur);
-      }),
-    );
-
-    // Player state stream
-    _subs.add(
-      _handler!.playerStateStream.listen((state) {
-        if (!mounted) return;
-        setState(() => _isPlaying = state.playing);
-      }),
-    );
+    if (!_streamsBound) {
+      _streamsBound = true;
+      _subs.add(
+        _handler!.positionStream.listen((pos) {
+          if (!mounted) return;
+          setState(() => _position = pos);
+          _trackListeningProgress(pos);
+          _checkXpAward(pos);
+        }),
+      );
+      _subs.add(
+        _handler!.durationStream.listen((dur) {
+          if (!mounted) return;
+          if (dur != null) setState(() => _duration = dur);
+        }),
+      );
+      _subs.add(
+        _handler!.playerStateStream.listen((state) {
+          if (!mounted) return;
+          setState(() => _isPlaying = state.playing);
+        }),
+      );
+    }
 
     // Load episode into the handler (resolves local/remote source)
+    if (mounted) {
+      setState(() {
+        _isPreparingAudio = true;
+        _audioError = null;
+      });
+    }
     try {
+      _listeningHistory ??= await _podcastRepository.getListeningHistory(
+        widget.episode.guid,
+      );
       await _handler!.setEpisode(widget.episode);
       // Restore previous listen position
-      final prevMs = widget.episode.listenProgress * 1000;
+      final previousSeconds =
+          _listeningHistory?.lastPositionSeconds ??
+          widget.episode.listenProgress.round();
+      final prevMs = previousSeconds * 1000;
       if (prevMs > 0) {
-        await _handler!.seek(Duration(milliseconds: prevMs.toInt()));
+        await _handler!.seek(Duration(milliseconds: prevMs));
       }
     } catch (e) {
       debugPrint('PodcastPlayerScreen: failed to load audio: $e');
+      if (mounted) setState(() => _audioError = e.toString());
+    } finally {
+      if (mounted) setState(() => _isPreparingAudio = false);
+    }
+  }
+
+  void _trackListeningProgress(Duration position) {
+    final delta = position.inSeconds - _lastObservedPosition.inSeconds;
+    if (_isPlaying && delta > 0 && delta <= 5) {
+      _sessionListenedSeconds += delta;
+    }
+    _lastObservedPosition = position;
+    if ((position.inSeconds - _lastPersistedPosition).abs() >= 10) {
+      _lastPersistedPosition = position.inSeconds;
+      unawaited(_persistListeningProgress());
+    }
+  }
+
+  Future<void> _persistListeningProgress() async {
+    final old = _listeningHistory;
+    final completed =
+        _duration > Duration.zero &&
+        _position.inMilliseconds / _duration.inMilliseconds >= 0.8;
+    final history = ListeningHistory(
+      episodeGuid: widget.episode.guid,
+      feedUrl: widget.episode.feedUrl,
+      lastPositionSeconds: _position.inSeconds,
+      totalListenedSeconds:
+          (old?.totalListenedSeconds ?? 0) + _sessionListenedSeconds,
+      completed: completed || (old?.completed ?? false),
+      completedAt: completed
+          ? (old?.completedAt ?? DateTime.now())
+          : old?.completedAt,
+      updatedAt: DateTime.now(),
+    );
+    _sessionListenedSeconds = 0;
+    _listeningHistory = history;
+    try {
+      await _podcastRepository.saveListeningHistory(history);
+    } catch (error) {
+      debugPrint('PodcastPlayerScreen: failed to save progress: $error');
     }
   }
 
@@ -154,6 +213,7 @@ class _PodcastPlayerScreenState extends State<PodcastPlayerScreen> {
 
   @override
   void dispose() {
+    unawaited(_persistListeningProgress());
     for (final sub in _subs) {
       sub.cancel();
     }
@@ -269,19 +329,53 @@ class _PodcastPlayerScreenState extends State<PodcastPlayerScreen> {
             const SizedBox(height: 24),
 
             // ── Audio player controls ──
-            AudioPlayerControls(
-              onPlay: _handler!.play,
-              onPause: _handler!.pause,
-              onSkipBack: _skipBack,
-              onSkipForward: _skipForward,
-              onSpeedChange: _changeSpeed,
-              isPlaying: _isPlaying,
-              playbackSpeed: _playbackSpeed,
-              position: _position,
-              duration: _duration,
-              episodeTitle: widget.episode.title,
-              artworkUrl: widget.artworkUrl,
-            ),
+            if (_isPreparingAudio)
+              Semantics(
+                label: 'podcast.preparingAudio'.tr(),
+                child: const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: LottieLoadingWidget.small(),
+                ),
+              )
+            else if (_audioError != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.errorContainer.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      'podcast.audioUnavailable'.tr(),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _setupPlayer,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text('podcast.retry'.tr()),
+                    ),
+                  ],
+                ),
+              )
+            else
+              AudioPlayerControls(
+                onPlay: _handler!.play,
+                onPause: _handler!.pause,
+                onSkipBack: _skipBack,
+                onSkipForward: _skipForward,
+                onSpeedChange: _changeSpeed,
+                isPlaying: _isPlaying,
+                playbackSpeed: _playbackSpeed,
+                position: _position,
+                duration: _duration,
+                episodeTitle: widget.episode.title,
+                artworkUrl: widget.artworkUrl,
+              ),
             const SizedBox(height: 24),
 
             // ── Transcript section ──

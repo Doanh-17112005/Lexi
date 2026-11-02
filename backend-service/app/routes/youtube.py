@@ -8,7 +8,9 @@ Phase 1: YouTube Video Integration with Auto Subtitles.
 """
 
 import asyncio
+import hashlib
 import logging
+import xml.etree.ElementTree as ET
 from typing import Optional
 from urllib.parse import quote
 
@@ -41,6 +43,7 @@ YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 YOUTUBE_CHANNEL_THUMBNAIL_COST = 1
 YOUTUBE_SEARCH_COST = 100
 YOUTUBE_NO_DATA_API_COST = 0
+YOUTUBE_ATOM_FEED = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
 
 
 def _raise_youtube_api_error(response: httpx.Response) -> None:
@@ -118,6 +121,7 @@ CURATED_CHANNELS = [
 ]
 
 
+
 async def _fetch_channel_thumbnails(channel_ids: list[str]) -> dict[str, str]:
     """
     Fetch real thumbnail URLs for channels via YouTube channels.list API.
@@ -132,18 +136,15 @@ async def _fetch_channel_thumbnails(channel_ids: list[str]) -> dict[str, str]:
         "id": ",".join(channel_ids),
         "key": settings.YOUTUBE_API_KEY,
     }
-
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{YOUTUBE_API_BASE}/channels", params=params)
             response.raise_for_status()
             data = response.json()
-
         thumbnails: dict[str, str] = {}
         for item in data.get("items", []):
             cid = item.get("id", "")
             snippet = item.get("snippet", {})
-            # Prefer medium (240px) → default (120px)
             thumb = (
                 snippet.get("thumbnails", {}).get("medium", {}).get("url")
                 or snippet.get("thumbnails", {}).get("default", {}).get("url")
@@ -156,6 +157,108 @@ async def _fetch_channel_thumbnails(channel_ids: list[str]) -> dict[str, str]:
         logger.warning(f"Failed to fetch channel thumbnails: {e}")
         return {}
 
+
+async def _fetch_channel_atom_feed(channel_id: str) -> dict:
+    """Fetch the latest real uploads from YouTube's public Atom feed."""
+    channel_level = next(
+        (channel["level"] for channel in CURATED_CHANNELS if channel["id"] == channel_id),
+        "",
+    )
+    feed_url = YOUTUBE_ATOM_FEED.format(channel_id=channel_id)
+    async with httpx.AsyncClient(
+        timeout=15.0,
+        headers={"User-Agent": "LexiLingo/1.0 (English learning app)"},
+        follow_redirects=True,
+    ) as client:
+        response = await client.get(feed_url)
+        response.raise_for_status()
+
+    root = ET.fromstring(response.content)
+    atom = "{http://www.w3.org/2005/Atom}"
+    yt = "{http://www.youtube.com/xml/schemas/2015}"
+    media = "{http://search.yahoo.com/mrss/}"
+    videos = []
+    for entry in root.findall(f"{atom}entry"):
+        video_id = (entry.findtext(f"{yt}videoId") or "").strip()
+        if not video_id:
+            continue
+        entry_channel_id = (entry.findtext(f"{yt}channelId") or channel_id).strip()
+        title = (entry.findtext(f"{atom}title") or "").strip()
+        author = entry.find(f"{atom}author")
+        channel_title = (
+            (author.findtext(f"{atom}name") if author is not None else "") or ""
+        ).strip()
+        group = entry.find(f"{media}group")
+        description = ""
+        thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+        thumbnail_medium = f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
+        if group is not None:
+            description = (group.findtext(f"{media}description") or "").strip()
+            thumbnail = group.find(f"{media}thumbnail")
+            if thumbnail is not None and thumbnail.get("url"):
+                thumbnail_url = thumbnail.get("url", thumbnail_url)
+        videos.append({
+            "video_id": video_id,
+            "title": title,
+            "description": description,
+            "channel_title": channel_title,
+            "channel_id": entry_channel_id,
+            "published_at": (entry.findtext(f"{atom}published") or "").strip(),
+            "thumbnail_url": thumbnail_url,
+            "thumbnail_medium": thumbnail_medium,
+            "cefr_level": channel_level,
+        })
+
+    return {
+        "videos": videos,
+        "next_page_token": None,
+        "prev_page_token": None,
+        "total_results": len(videos),
+    }
+
+
+async def _search_curated_atom_feeds(
+    query: str,
+    max_results: int,
+    channel_id: Optional[str] = None,
+) -> dict:
+    """Search real recent uploads from the curated channel feeds."""
+    channel_ids = [channel_id] if channel_id else [c["id"] for c in CURATED_CHANNELS]
+    feed_results = await asyncio.gather(
+        *(_fetch_channel_atom_feed(cid) for cid in channel_ids),
+        return_exceptions=True,
+    )
+    query_lower = query.strip().lower()
+    videos = []
+    seen_ids = set()
+    successful_feeds = 0
+    for feed_result in feed_results:
+        if isinstance(feed_result, Exception):
+            logger.warning("YouTube Atom feed failed: %s", feed_result)
+            continue
+        successful_feeds += 1
+        for video in feed_result.get("videos", []):
+            haystack = " ".join((
+                video.get("title", ""),
+                video.get("description", ""),
+                video.get("channel_title", ""),
+            )).lower()
+            video_id = video.get("video_id", "")
+            if query_lower not in haystack or not video_id or video_id in seen_ids:
+                continue
+            seen_ids.add(video_id)
+            videos.append(video)
+
+    if successful_feeds == 0:
+        raise RuntimeError("All curated YouTube Atom feeds failed")
+
+    videos.sort(key=lambda video: video.get("published_at", ""), reverse=True)
+    return {
+        "videos": videos[:max_results],
+        "next_page_token": None,
+        "prev_page_token": None,
+        "total_results": len(videos),
+    }
 
 @router.get("/channels")
 async def get_curated_channels(
@@ -246,10 +349,40 @@ async def search_videos(
     Cache: Redis 6h, DB 12h, SQLite 24h on client.
     """
     if not settings.YOUTUBE_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="YouTube API key not configured.",
-        )
+        cache_service = APICacheService(db)
+        atom_search_hash = hashlib.sha256(
+            f"{q}:{channel_id or ''}".encode()
+        ).hexdigest()[:16]
+        try:
+            result = await cache_service.get_or_fetch(
+                cache_key=f"youtube:atom_search:{atom_search_hash}:{max_results}",
+                api_name="youtube",
+                fetch_fn=lambda: _search_curated_atom_feeds(q, max_results, channel_id),
+                priority=Priority.LOW,
+                cost=YOUTUBE_NO_DATA_API_COST,
+                redis_ttl=1800,
+                db_ttl=10800,
+            )
+            data_copy = dict(result.data) if result and result.data else {"videos": []}
+            data_copy["videos"] = [
+                {
+                    **video,
+                    "thumbnail_url": _proxy_url(video.get("thumbnail_url", ""), request),
+                    "thumbnail_medium": _proxy_url(video.get("thumbnail_medium", ""), request),
+                }
+                for video in data_copy.get("videos", [])
+            ]
+            return {
+                "data": data_copy,
+                "source": "youtube_atom" if result.source == "api" else result.source,
+                "is_stale": result.is_stale,
+            }
+        except Exception as e:
+            logger.error("YouTube Atom search failed: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="YouTube public feeds are temporarily unavailable.",
+            ) from e
 
     cache_parts = [f"q:{q}", f"max:{max_results}"]
     if channel_id:
@@ -440,10 +573,40 @@ async def get_channel_videos(
     Cache: Redis 12h, DB 24h.
     """
     if not settings.YOUTUBE_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="YouTube API key not configured.",
-        )
+        cache_service = APICacheService(db)
+        try:
+            result = await cache_service.get_or_fetch(
+                cache_key=f"youtube:atom_channel:{channel_id}",
+                api_name="youtube",
+                fetch_fn=lambda: _fetch_channel_atom_feed(channel_id),
+                priority=Priority.LOW,
+                cost=YOUTUBE_NO_DATA_API_COST,
+                redis_ttl=1800,
+                db_ttl=10800,
+            )
+            data_copy = dict(result.data) if result and result.data else {"videos": []}
+            videos = data_copy.get("videos", [])[:max_results]
+            data_copy["videos"] = [
+                {
+                    **video,
+                    "thumbnail_url": _proxy_url(video.get("thumbnail_url", ""), request),
+                    "thumbnail_medium": _proxy_url(video.get("thumbnail_medium", ""), request),
+                }
+                for video in videos
+            ]
+            data_copy["total_results"] = len(data_copy["videos"])
+            return {
+                "channel_id": channel_id,
+                "data": data_copy,
+                "source": "youtube_atom" if result.source == "api" else result.source,
+                "is_stale": result.is_stale,
+            }
+        except Exception as e:
+            logger.error("YouTube Atom feed failed for %s: %s", channel_id, e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="YouTube public feed is temporarily unavailable.",
+            ) from e
 
     cache_parts = [f"ch:{channel_id}", f"max:{max_results}"]
     if page_token:

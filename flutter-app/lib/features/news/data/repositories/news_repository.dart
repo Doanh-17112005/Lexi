@@ -54,6 +54,15 @@ class NewsRepository {
 
   String get _baseUrl => '${ApiConfig.baseUrl}/news';
 
+  String _stableFingerprint(String value) {
+    var hash = 0x811c9dc5;
+    for (final codeUnit in value.codeUnits.take(4000)) {
+      hash ^= codeUnit;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
+
   // ──── Articles ────
 
   /// Get news articles, optionally filtered by category and CEFR level.
@@ -117,15 +126,29 @@ class NewsRepository {
   // ──── Quiz ────
 
   /// Get comprehension quiz for an article.
-  Future<NewsQuiz?> getQuiz(String articleId) async {
-    final cacheKey = 'news:quiz:$articleId';
+  Future<NewsQuiz?> getQuiz(NewsArticle article) async {
+    final sourceContext = [
+      article.title,
+      article.description,
+      article.content,
+    ].join('\n');
+    final cacheKey =
+        'news:quiz:v3:${article.id}:${_stableFingerprint(sourceContext)}';
 
     final data = await _cache.getOrFetch(
       key: cacheKey,
       type: 'news',
       fetchFn: () async {
-        final uri = Uri.parse('$_baseUrl/$articleId/quiz');
-        final response = await _client.get(uri);
+        final uri = Uri.parse('$_baseUrl/${article.id}/quiz');
+        final response = await _client.post(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'title': article.title,
+            'description': article.description,
+            'content': article.content,
+          }),
+        );
         _checkResponse(response);
         return jsonDecode(response.body) as Map<String, dynamic>;
       },
@@ -165,7 +188,23 @@ class NewsRepository {
 
   void _checkResponse(http.Response response) {
     if (response.statusCode >= 400) {
-      throw Exception('HTTP ${response.statusCode}: ${response.reasonPhrase}');
+      String? detail;
+      try {
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final rawDetail =
+            decoded['detail'] ??
+            (decoded['error'] is Map<String, dynamic>
+                ? (decoded['error'] as Map<String, dynamic>)['message']
+                : null);
+        if (rawDetail is String && rawDetail.trim().isNotEmpty) {
+          detail = rawDetail.trim();
+        }
+      } catch (_) {
+        // Fall back to the HTTP status below when the server body is not JSON.
+      }
+      throw Exception(
+        detail ?? 'HTTP ${response.statusCode}: ${response.reasonPhrase}',
+      );
     }
   }
 }

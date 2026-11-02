@@ -11,6 +11,7 @@ import 'package:lexilingo_app/core/services/google_sign_in_service.dart';
 import 'package:lexilingo_app/core/services/purchases_service.dart';
 import 'package:lexilingo_app/core/services/session_expired_service.dart';
 import 'package:lexilingo_app/core/services/user_scope_service.dart';
+import 'package:lexilingo_app/core/services/web_auth_origin_service.dart';
 import 'package:lexilingo_app/core/usecase/usecase.dart';
 import 'package:lexilingo_app/features/auth/domain/entities/user_entity.dart';
 import 'package:lexilingo_app/features/auth/domain/repositories/auth_repository.dart';
@@ -39,6 +40,7 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoading = false;
   bool _isCheckingAuth = true;
   bool _isJustLoggedIn = false;
+  bool _registrationRequiresVerification = true;
   String? _errorMessage;
   late final StreamSubscription<void> _sessionExpiredSub;
 
@@ -80,6 +82,8 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isCheckingAuth => _isCheckingAuth;
   bool get isJustLoggedIn => _isJustLoggedIn;
+  bool get registrationRequiresVerification =>
+      _registrationRequiresVerification;
   String? get errorMessage => _errorMessage;
 
   // Clear just logged in flag (call after welcome screen)
@@ -162,6 +166,12 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage = null;
       notifyListeners();
 
+      if (await WebAuthOriginService.redirectLoopbackToLocalhost()) {
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
+
       // Get real ID token from Google Sign-In
       final idToken = await googleSignInService.signIn();
       if (idToken == GoogleSignInService.redirectInProgressMarker) {
@@ -227,6 +237,12 @@ class AuthProvider extends ChangeNotifier {
       _isLoading = true;
       _errorMessage = null;
       notifyListeners();
+
+      if (await WebAuthOriginService.redirectLoopbackToLocalhost()) {
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
 
       // Get Firebase ID token via Facebook authentication
       final idToken = await facebookSignInService.signIn();
@@ -471,6 +487,7 @@ class AuthProvider extends ChangeNotifier {
     try {
       _isLoading = true;
       _errorMessage = null;
+      _registrationRequiresVerification = true;
       notifyListeners();
 
       final params = RegisterParams(
@@ -488,10 +505,11 @@ class AuthProvider extends ChangeNotifier {
           _user = null;
           _isJustLoggedIn = false;
         },
-        (_) {
+        (registeredUser) {
           _user = null;
           _errorMessage = null;
           _isJustLoggedIn = false;
+          _registrationRequiresVerification = !registeredUser.isVerified;
         },
       );
     } catch (e) {
@@ -586,6 +604,19 @@ class AuthProvider extends ChangeNotifier {
     }
     if (normalized.contains('google_server_client_id')) {
       return 'Google sign-in config is missing. Please contact support.';
+    }
+    if (normalized.contains('unauthorized-domain')) {
+      return 'This Web domain is not authorized in Firebase. Open the app at http://localhost:5174 or add the current domain in Firebase Authentication settings.';
+    }
+    if (normalized.contains('operation-not-allowed')) {
+      return 'This sign-in provider is disabled. Enable it in Firebase Authentication > Sign-in method.';
+    }
+    if (normalized.contains('configuration-not-found') ||
+        normalized.contains('invalid-api-key')) {
+      return 'Firebase Web configuration is invalid or incomplete.';
+    }
+    if (normalized.contains('popup-blocked')) {
+      return 'The sign-in popup was blocked. Allow popups for this site and try again.';
     }
     if (normalized.contains('google sign-in android config mismatch') ||
         normalized.contains('developer_error') ||

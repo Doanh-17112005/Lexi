@@ -10,8 +10,10 @@ import 'package:lexilingo_app/features/gamification/domain/entities/shop_item.da
 import 'package:lexilingo_app/features/games/domain/entities/game_entities.dart';
 import 'package:lexilingo_app/features/games/presentation/providers/games_provider.dart';
 import 'package:lexilingo_app/features/games/presentation/screens/game_result_screen.dart';
+import 'package:lexilingo_app/features/games/presentation/widgets/game_answer_explanation.dart';
 import 'package:lexilingo_app/features/games/presentation/widgets/game_load_state.dart';
 import 'package:lexilingo_app/features/games/presentation/widgets/game_powerup_tray.dart';
+import 'package:lexilingo_app/features/games/presentation/widgets/game_question_navigation.dart';
 
 const _grammarQuizPowerUps = [
   ShopItemEntity.effectTimeFreeze,
@@ -24,8 +26,8 @@ const _grammarQuizPowerUps = [
 
 /// Grammar Quiz game screen.
 ///
-/// Similar to Fill in the Blank but shows the grammar topic, uses a 12-second
-/// timer, and provides adaptive grammar mastery feedback.
+/// Shows grammar question with topic banner, 4 options, and step-by-step
+/// review with detailed rule and example analysis.
 class GrammarQuizScreen extends StatefulWidget {
   const GrammarQuizScreen({super.key});
 
@@ -43,16 +45,24 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
   bool _answered = false;
   bool _gameLoaded = false;
   bool _isFinishing = false;
-  String? _feedbackText;
+  bool _isSavingAnswer = false;
+  bool _restoredSession = false;
+  String? _answerSaveError;
   final Map<String, String> _submittedAnswers = {};
   final Set<int> _eliminatedIndices = {};
   bool _luckyCloverActive = false;
   int _scoreMultiplier = 1;
   final _random = Random();
 
-  // Per-topic correct tracking for mastery message
   final Map<String, int> _topicCorrect = {};
   final Map<String, int> _topicTotal = {};
+
+  // Review & tracking state
+  final Map<int, int> _selectedIndices = {};
+  final Map<int, String> _chosenAnswers = {};
+  final Map<int, bool> _answerCorrectness = {};
+  final Map<int, GameExplanation> _explanationDetails = {};
+  final Set<int> _answeredIndices = {};
 
   @override
   void initState() {
@@ -62,7 +72,7 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<GamesProvider>().loadGrammarQuiz().then((_) {
-        if (mounted) _startQuestion();
+        if (mounted) _loadCurrentQuestion();
       });
     });
   }
@@ -74,6 +84,49 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
     super.dispose();
   }
 
+  void _loadCurrentQuestion() {
+    final provider = context.read<GamesProvider>();
+    final game = provider.grammarQuiz;
+    if (game == null) return;
+    _restoreSessionAnswers(provider, game);
+
+    if (_answeredIndices.contains(_questionIndex)) {
+      _timer?.cancel();
+      setState(() {
+        _gameLoaded = true;
+        _answered = true;
+        _selectedIndex = _selectedIndices[_questionIndex];
+      });
+    } else {
+      _startQuestion();
+    }
+  }
+
+  void _restoreSessionAnswers(GamesProvider provider, GrammarQuizGame game) {
+    if (_restoredSession) return;
+    _restoredSession = true;
+    for (var index = 0; index < game.questions.length; index++) {
+      final question = game.questions[index];
+      final feedback = provider.sessionAnswers[question.id];
+      if (feedback == null) continue;
+      _submittedAnswers[question.id] = feedback.answer;
+      _chosenAnswers[index] = feedback.answer;
+      _selectedIndices[index] = question.options.indexOf(feedback.answer);
+      _answerCorrectness[index] = feedback.isCorrect;
+      _explanationDetails[index] = feedback.explanation;
+      _answeredIndices.add(index);
+      _recordTopic(question.topic, feedback.isCorrect);
+      if (feedback.isCorrect) _correctCount++;
+    }
+    if (_answeredIndices.isNotEmpty) {
+      _questionIndex = List.generate(game.questions.length, (index) => index)
+          .firstWhere(
+            (index) => !_answeredIndices.contains(index),
+            orElse: () => game.questions.length - 1,
+          );
+    }
+  }
+
   void _startQuestion() {
     final game = context.read<GamesProvider>().grammarQuiz;
     if (game == null) return;
@@ -82,7 +135,6 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
       _timeLeft = game.timerSecondsPerQuestion;
       _selectedIndex = null;
       _answered = false;
-      _feedbackText = null;
       _eliminatedIndices.clear();
     });
     _timer?.cancel();
@@ -117,9 +169,7 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
         break;
       case ShopItemEntity.effectSkipToken:
         _timer?.cancel();
-        _submittedAnswers[q.id] = '';
-        setState(() => _answered = true);
-        Future.delayed(const Duration(milliseconds: 300), _nextQuestion);
+        _handleTimeout();
         break;
       case ShopItemEntity.effectRevealHint:
         final wrongIndices = List.generate(q.options.length, (i) => i)
@@ -145,43 +195,129 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
   }
 
   void _handleTimeout() {
-    if (_answered) return;
-    final game = context.read<GamesProvider>().grammarQuiz!;
+    if (_answered || _answeredIndices.contains(_questionIndex)) return;
+    final provider = context.read<GamesProvider>();
+    final game = provider.grammarQuiz!;
     final q = game.questions[_questionIndex];
-    _submittedAnswers[q.id] = '';
+    final questionId = q.id;
+
+    _submittedAnswers[questionId] = '';
     _recordTopic(q.topic, false);
+    _selectedIndices[_questionIndex] = -1;
+    _chosenAnswers[_questionIndex] = '';
+    _answerCorrectness[_questionIndex] = false;
+    _answeredIndices.add(_questionIndex);
+
+    final explanation = q.explanationDetail.summary.isNotEmpty
+        ? q.explanationDetail
+        : GameExplanation(
+            summary: q.explanation.isNotEmpty
+                ? q.explanation
+                : 'grammarQuiz.timeoutFeedback'.tr(),
+            rule: _formatTopic(q.topic),
+            example: q.question.replaceAll('___', q.correctAnswer),
+          );
+    _explanationDetails[_questionIndex] = explanation;
+
     setState(() {
       _answered = true;
-      _feedbackText =
-          '${'grammarQuiz.timeoutFeedback'.tr()} ${q.explanation.isNotEmpty ? q.explanation : ''}';
+      _selectedIndex = -1;
     });
-    Future.delayed(const Duration(seconds: 2), _nextQuestion);
+
+    _persistAnswer(game.sessionId, questionId, '', _questionIndex);
   }
 
   void _selectAnswer(int index) {
-    if (_answered || _eliminatedIndices.contains(index)) return;
+    if (_answered ||
+        _answeredIndices.contains(_questionIndex) ||
+        _eliminatedIndices.contains(index)) {
+      return;
+    }
     _timer?.cancel();
-    final game = context.read<GamesProvider>().grammarQuiz!;
+    final provider = context.read<GamesProvider>();
+    final game = provider.grammarQuiz!;
     final q = game.questions[_questionIndex];
     var correct = q.options[index] == q.correctAnswer;
     if (!correct && _luckyCloverActive && _random.nextDouble() < 0.3) {
       correct = true;
       _luckyCloverActive = false;
     }
-    _submittedAnswers[q.id] = q.options[index];
+
+    final selectedText = q.options[index];
+    _submittedAnswers[q.id] = selectedText;
+    _selectedIndices[_questionIndex] = index;
+    _chosenAnswers[_questionIndex] = selectedText;
+    _answerCorrectness[_questionIndex] = correct;
+    _answeredIndices.add(_questionIndex);
     if (correct) _correctCount++;
     _recordTopic(q.topic, correct);
-    final masteryMsg = _buildMasteryMessage(q.topic);
+
+    final explanation = q.explanationDetail.summary.isNotEmpty
+        ? q.explanationDetail
+        : GameExplanation(
+            summary: correct
+                ? (q.explanation.isNotEmpty
+                      ? q.explanation
+                      : 'grammarQuiz.correctFeedback'.tr())
+                : (q.explanation.isNotEmpty
+                      ? q.explanation
+                      : 'grammarQuiz.incorrectFeedback'.tr()),
+            rule: _formatTopic(q.topic),
+            example: q.question.replaceAll('___', q.correctAnswer),
+          );
+    _explanationDetails[_questionIndex] = explanation;
+
     setState(() {
       _selectedIndex = index;
       _answered = true;
-      _feedbackText = correct
-          ? q.explanation.isNotEmpty
-                ? q.explanation
-                : 'grammarQuiz.correctFeedback'.tr()
-          : '${q.explanation.isNotEmpty ? q.explanation : 'grammarQuiz.incorrectFeedback'.tr()}${masteryMsg.isNotEmpty ? '\n$masteryMsg' : ''}';
     });
-    Future.delayed(const Duration(seconds: 2), _nextQuestion);
+
+    _persistAnswer(game.sessionId, q.id, selectedText, _questionIndex);
+  }
+
+  Future<void> _persistAnswer(
+    String sessionId,
+    String itemId,
+    String answer,
+    int questionIndex,
+  ) async {
+    if (sessionId.isEmpty || _isSavingAnswer) return;
+    setState(() {
+      _isSavingAnswer = true;
+      _answerSaveError = null;
+    });
+    final feedback = await context.read<GamesProvider>().saveAnswer(
+      sessionId: sessionId,
+      itemId: itemId,
+      answer: answer,
+    );
+    if (!mounted) return;
+    setState(() {
+      _isSavingAnswer = false;
+      if (feedback == null) {
+        _answerSaveError = 'save_failed';
+        return;
+      }
+      final wasCorrect = _answerCorrectness[questionIndex] ?? false;
+      if (wasCorrect != feedback.isCorrect) {
+        _correctCount += feedback.isCorrect ? 1 : -1;
+      }
+      _answerCorrectness[questionIndex] = feedback.isCorrect;
+      _explanationDetails[questionIndex] = feedback.explanation;
+      _answerSaveError = null;
+    });
+  }
+
+  void _retryCurrentAnswerSave() {
+    final game = context.read<GamesProvider>().grammarQuiz;
+    if (game == null) return;
+    final question = game.questions[_questionIndex];
+    _persistAnswer(
+      game.sessionId,
+      question.id,
+      _submittedAnswers[question.id] ?? '',
+      _questionIndex,
+    );
   }
 
   void _recordTopic(String topic, bool correct) {
@@ -189,34 +325,12 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
     if (correct) _topicCorrect[topic] = (_topicCorrect[topic] ?? 0) + 1;
   }
 
-  String _buildMasteryMessage(String topic) {
-    final total = _topicTotal[topic] ?? 0;
-    final correct = _topicCorrect[topic] ?? 0;
-    if (total < 3) return '';
-    final pct = correct / total * 100;
-    if (pct >= 80) {
-      return 'grammarQuiz.greatMastery'.tr(
-        namedArgs: {'topic': _formatTopic(topic)},
-      );
-    }
-    if (pct >= 50) {
-      return 'grammarQuiz.keepPracticing'.tr(
-        namedArgs: {'topic': _formatTopic(topic)},
-      );
-    }
-    return 'grammarQuiz.reviewConcepts'.tr(
-      namedArgs: {'topic': _formatTopic(topic)},
-    );
+  void _previousQuestion() {
+    if (_questionIndex <= 0 || _isFinishing) return;
+    _timer?.cancel();
+    setState(() => _questionIndex--);
+    _loadCurrentQuestion();
   }
-
-  String _formatTopic(String t) => t
-      .replaceAll('_', ' ')
-      .split(' ')
-      .map((w) {
-        if (w.isEmpty) return w;
-        return w[0].toUpperCase() + w.substring(1);
-      })
-      .join(' ');
 
   void _nextQuestion() {
     if (!mounted || _isFinishing) return;
@@ -226,8 +340,9 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
       _finishGame();
       return;
     }
+    _timer?.cancel();
     setState(() => _questionIndex++);
-    _startQuestion();
+    _loadCurrentQuestion();
   }
 
   Future<void> _abandonGame() async {
@@ -275,7 +390,6 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
     _timer?.cancel();
     final provider = context.read<GamesProvider>();
     final game = provider.grammarQuiz!;
-    // Celebrate if accuracy ≥ 60% (skill: gamification-confetti-win)
     if (game.questions.isNotEmpty &&
         _correctCount / game.questions.length >= 0.6) {
       _confettiController.play();
@@ -289,10 +403,7 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
       correctAnswers: _correctCount,
       answers: [
         for (final question in game.questions)
-          {
-            'id': question.id,
-            'answer': _submittedAnswers[question.id] ?? '',
-          },
+          {'id': question.id, 'answer': _submittedAnswers[question.id] ?? ''},
       ],
     );
     if (!mounted) return;
@@ -316,6 +427,16 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
     );
   }
 
+  String _formatTopic(String topic) {
+    return topic
+        .replaceAll('_', ' ')
+        .split(' ')
+        .map(
+          (w) => w.isNotEmpty ? '${w[0].toUpperCase()}${w.substring(1)}' : '',
+        )
+        .join(' ');
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -336,277 +457,297 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
               message: 'games.loadFailed'.tr(),
               onRetry: () async {
                 await provider.loadGrammarQuiz();
-              if (mounted) _startQuestion();
-            },
-          );
-        }
-        if (game == null || game.questions.isEmpty) {
-          return GameLoadState(
-            message: 'games.emptyGame'.tr(),
-            onRetry: () async {
-              await provider.loadGrammarQuiz();
-              if (mounted) _startQuestion();
-            },
-          );
-        }
-        if (!_gameLoaded) {
-          return const Scaffold(
-            body: Center(child: LottieLoadingWidget.medium()),
-          );
-        }
-        final q = game.questions[_questionIndex];
+                if (mounted) _loadCurrentQuestion();
+              },
+            );
+          }
+          if (game == null || game.questions.isEmpty) {
+            return GameLoadState(
+              message: 'games.emptyGame'.tr(),
+              onRetry: () async {
+                await provider.loadGrammarQuiz();
+                if (mounted) _loadCurrentQuestion();
+              },
+            );
+          }
+          if (!_gameLoaded) {
+            return const Scaffold(
+              body: Center(child: LottieLoadingWidget.medium()),
+            );
+          }
+          final q = game.questions[_questionIndex];
+          final isQuestionAnswered = _answeredIndices.contains(_questionIndex);
+          final savedSelectedIndex = _selectedIndices[_questionIndex];
+          final explanation =
+              _explanationDetails[_questionIndex] ??
+              (q.explanationDetail.summary.isNotEmpty
+                  ? q.explanationDetail
+                  : GameExplanation(
+                      summary: q.explanation,
+                      rule: _formatTopic(q.topic),
+                      example: q.question.replaceAll('___', q.correctAnswer),
+                    ));
 
-        return Scaffold(
-          appBar: AppBar(
-            backgroundColor: Theme.of(context).colorScheme.surface,
-            elevation: 0,
-            title: Text(
-              'grammarQuiz.questionProgress'.tr(
-                namedArgs: {
-                  'current': '${_questionIndex + 1}',
-                  'total': '${game.questions.length}',
-                },
-              ),
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
-            ),
-            actions: [
-              Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Center(
-                  child: _TimerWidget(
-                    timeLeft: _timeLeft,
-                    total: game.timerSecondsPerQuestion,
-                  ),
+          return Scaffold(
+            appBar: AppBar(
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              elevation: 0,
+              title: Text(
+                'grammarQuiz.questionProgress'.tr(
+                  namedArgs: {
+                    'current': '${_questionIndex + 1}',
+                    'total': '${game.questions.length}',
+                  },
+                ),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
-            ],
-          ),
-          body: Stack(
-            children: [
-              Column(
-                children: [
-                  LinearProgressIndicator(
-                    value: _questionIndex / game.questions.length,
-                    backgroundColor: Theme.of(
-                      context,
-                    ).colorScheme.surfaceContainerHighest,
-                    color: AppColors.primary,
-                    minHeight: 4,
-                  ),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          GamePowerUpTray(
-                            availableTypes: _grammarQuizPowerUps,
-                            enabled: !_answered,
-                            onUse: _onPowerUpUsed,
-                          ),
-                          if (_luckyCloverActive)
-                            Padding(
-                              padding: EdgeInsets.only(top: 6),
-                              child: ActivePowerUpBadge(
-                                itemType: ShopItemEntity.effectLuckyClover,
-                                label: 'games.luckyCloverActive'.tr(),
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-                          // Topic chip
-                          Chip(
-                            label: Text(
-                              _formatTopic(game.topic),
-                              style: const TextStyle(
-                                color: AppColors.primary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            backgroundColor: AppColors.primary.withValues(
-                              alpha: 0.1,
-                            ),
-                            side: const BorderSide(color: AppColors.primary),
-                          ),
-                          const SizedBox(height: 12),
-                          // Timer bar
-                          LinearProgressIndicator(
-                            value: _timeLeft / game.timerSecondsPerQuestion,
-                            backgroundColor: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHighest,
-                            color: _timeLeft > 4
-                                ? AppColors.primary
-                                : AppColors.errorBright,
-                            minHeight: 6,
-                          ),
-                          const SizedBox(height: 16),
-                          // Question
-                          Container(
-                            width: double.infinity,
-                            padding: EdgeInsets.all(18),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context).colorScheme.surface,
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.shadow.withValues(alpha: 0.05),
-                                  blurRadius: 6,
-                                ),
-                              ],
-                            ),
-                            child: Text(
-                              q.question,
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurface,
-                                height: 1.5,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          // Answer cards
-                          ...List.generate(q.options.length, (i) {
-                            final eliminated = _eliminatedIndices.contains(i);
-                            Color bg = Theme.of(context).colorScheme.surface;
-                            Color border = Theme.of(
-                              context,
-                            ).colorScheme.outlineVariant;
-                            Color text = Theme.of(
-                              context,
-                            ).colorScheme.onSurface;
-                            IconData? icon;
-                            if (_answered) {
-                              if (q.options[i] == q.correctAnswer) {
-                                bg = AppColors.greenSuccess.withValues(
-                                  alpha: 0.1,
-                                );
-                                border = AppColors.greenSuccess;
-                                text = AppColors.greenSuccess;
-                                icon = Icons.check_circle_outline;
-                              } else if (i == _selectedIndex) {
-                                bg = Colors.red.withValues(alpha: 0.08);
-                                border = AppColors.errorBright;
-                                text = AppColors.errorBright;
-                                icon = Icons.cancel_outlined;
-                              }
-                            } else if (_selectedIndex == i) {
-                              bg = AppColors.primary.withValues(alpha: 0.1);
-                              border = AppColors.primary;
-                              text = AppColors.primary;
-                            } else if (eliminated) {
-                              bg = Theme.of(
-                                context,
-                              ).colorScheme.surfaceContainerHighest;
-                              text = Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.4,
-                              );
-                            }
-                            return GestureDetector(
-                              onTap: eliminated ? null : () => _selectAnswer(i),
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 180),
-                                margin: const EdgeInsets.only(bottom: 10),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 14,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: bg,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: border, width: 1.5),
-                                ),
-                                child: Row(
-                                  children: [
-                                    if (icon != null) ...[
-                                      Icon(icon, color: border, size: 18),
-                                      const SizedBox(width: 8),
-                                    ],
-                                    Expanded(
-                                      child: Text(
-                                        q.options[i],
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                          color: text,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }),
-                          // Feedback
-                          if (_feedbackText != null) ...[
-                            const SizedBox(height: 8),
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 250),
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color:
-                                    _answered &&
-                                        _selectedIndex != null &&
-                                        q.options[_selectedIndex!] ==
-                                            q.correctAnswer
-                                    ? AppColors.greenSuccess.withValues(
-                                        alpha: 0.08,
-                                      )
-                                    : Colors.red.withValues(alpha: 0.07),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color:
-                                      _answered &&
-                                          _selectedIndex != null &&
-                                          q.options[_selectedIndex!] ==
-                                              q.correctAnswer
-                                      ? AppColors.greenSuccess
-                                      : AppColors.errorBright,
-                                ),
-                              ),
-                              child: Text(
-                                _feedbackText!,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface,
-                                  height: 1.4,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
+              centerTitle: true,
+              actions: [
+                if (!isQuestionAnswered)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 16),
+                    child: Center(
+                      child: _TimerWidget(
+                        timeLeft: _timeLeft,
+                        total: game.timerSecondsPerQuestion,
                       ),
                     ),
                   ),
-                ],
-              ),
-              // Confetti overlay (skill: gamification-confetti-win)
-              Align(
-                alignment: Alignment.topCenter,
-                child: ConfettiWidget(
-                  confettiController: _confettiController,
-                  blastDirectionality: BlastDirectionality.explosive,
-                  numberOfParticles: 20,
-                  gravity: 0.4,
-                  colors: const [
-                    AppColors.primary,
-                    Colors.yellow,
-                    AppColors.greenSuccessBright,
-                    AppColors.orange,
+              ],
+            ),
+            body: Stack(
+              children: [
+                Column(
+                  children: [
+                    // Question progress dots
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, bottom: 6),
+                      child: GameQuestionProgress(
+                        currentIndex: _questionIndex,
+                        total: game.questions.length,
+                        answeredIndices: _answeredIndices,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: GamePowerUpTray(
+                        availableTypes: _grammarQuizPowerUps,
+                        enabled: !isQuestionAnswered,
+                        onUse: _onPowerUpUsed,
+                      ),
+                    ),
+                    if (_luckyCloverActive)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: ActivePowerUpBadge(
+                          itemType: ShopItemEntity.effectLuckyClover,
+                          label: 'games.luckyCloverActive'.tr(),
+                        ),
+                      ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Topic badge
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                _formatTopic(q.topic),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppColors.primary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            // Question sentence card
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.surface,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Theme.of(context).colorScheme.shadow
+                                        .withValues(alpha: 0.06),
+                                    blurRadius: 8,
+                                  ),
+                                ],
+                              ),
+                              child: Text(
+                                q.question,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface,
+                                  height: 1.5,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            // Options list
+                            ...List.generate(q.options.length, (i) {
+                              final eliminated = _eliminatedIndices.contains(i);
+                              Color bg = Theme.of(context).colorScheme.surface;
+                              Color border = Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant;
+                              Color text = Theme.of(
+                                context,
+                              ).colorScheme.onSurface;
+                              IconData? icon;
+
+                              if (isQuestionAnswered) {
+                                if (q.options[i] == q.correctAnswer) {
+                                  bg = AppColors.greenSuccess.withValues(
+                                    alpha: 0.12,
+                                  );
+                                  border = AppColors.greenSuccess;
+                                  text = AppColors.greenSuccess;
+                                  icon = Icons.check_circle_outline;
+                                } else if (i == savedSelectedIndex) {
+                                  bg = Colors.red.withValues(alpha: 0.12);
+                                  border = AppColors.errorBright;
+                                  text = AppColors.errorBright;
+                                  icon = Icons.cancel_outlined;
+                                }
+                              } else if (_selectedIndex == i) {
+                                bg = AppColors.primary.withValues(alpha: 0.1);
+                                border = AppColors.primary;
+                                text = AppColors.primary;
+                              } else if (eliminated) {
+                                bg = Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest;
+                                text = Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant
+                                    .withValues(alpha: 0.4);
+                              }
+
+                              return GestureDetector(
+                                onTap: (isQuestionAnswered || eliminated)
+                                    ? null
+                                    : () => _selectAnswer(i),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 180),
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 14,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: bg,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: border,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      if (icon != null) ...[
+                                        Icon(icon, color: border, size: 18),
+                                        const SizedBox(width: 8),
+                                      ],
+                                      Expanded(
+                                        child: Text(
+                                          q.options[i],
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                            color: text,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }),
+                            // Detailed explanation card
+                            if (isQuestionAnswered) ...[
+                              const SizedBox(height: 12),
+                              GameAnswerExplanationCard(
+                                isCorrect:
+                                    _answerCorrectness[_questionIndex] ?? false,
+                                selectedAnswer:
+                                    _chosenAnswers[_questionIndex] ?? '',
+                                correctAnswer: q.correctAnswer,
+                                explanation: explanation,
+                                fallbackRule: _formatTopic(q.topic),
+                                fallbackExample: q.question.replaceAll(
+                                  '___',
+                                  q.correctAnswer,
+                                ),
+                              ),
+                              GameAnswerSaveStatus(
+                                isSaving: _isSavingAnswer,
+                                error: _answerSaveError,
+                                onRetry: _retryCurrentAnswerSave,
+                              ),
+                            ],
+                            const SizedBox(height: 20),
+                            // Navigation Buttons (Previous & Next)
+                            GameQuestionNavigation(
+                              canGoPrevious: _questionIndex > 0,
+                              canGoNext:
+                                  isQuestionAnswered &&
+                                  !_isSavingAnswer &&
+                                  _answerSaveError == null,
+                              isLastQuestion:
+                                  _questionIndex == game.questions.length - 1,
+                              isBusy:
+                                  _isFinishing ||
+                                  _isSavingAnswer ||
+                                  _answerSaveError != null,
+                              onPrevious: _previousQuestion,
+                              onNext: _nextQuestion,
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-              ),
-            ],
-          ),
-        );
+                // Confetti overlay
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: ConfettiWidget(
+                    confettiController: _confettiController,
+                    blastDirectionality: BlastDirectionality.explosive,
+                    numberOfParticles: 20,
+                    gravity: 0.4,
+                    colors: const [
+                      AppColors.primary,
+                      Colors.yellow,
+                      AppColors.greenSuccessBright,
+                      AppColors.orange,
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
         },
       ),
     );

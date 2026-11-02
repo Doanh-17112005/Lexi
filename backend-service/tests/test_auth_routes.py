@@ -859,12 +859,13 @@ class TestGoogleLogin:
     async def test_google_login_invalid_token_returns_401(self, client):
         """An unverifiable Google ID token returns 401."""
         event_loop_thread = threading.get_ident()
+        verify_google = AsyncMock(return_value=None)
 
         def verify_firebase_in_worker(_token):
             assert threading.get_ident() != event_loop_thread
             return None
 
-        with patch("app.core.security.verify_google_token", new=AsyncMock(return_value=None)), \
+        with patch("app.core.security.verify_google_token", new=verify_google), \
              patch(
                  "app.core.firebase_auth.verify_firebase_token",
                  side_effect=verify_firebase_in_worker,
@@ -874,6 +875,7 @@ class TestGoogleLogin:
                 json={"id_token": "bad-token", "source": "app"},
             )
         assert response.status_code == 401
+        verify_google.assert_awaited_once_with("bad-token", audience=None)
 
     async def test_google_login_new_user_created_returns_200(self):
         """A first-time Google sign-in (email_verified=True) creates a new user."""

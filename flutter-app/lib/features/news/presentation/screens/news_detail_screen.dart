@@ -200,7 +200,11 @@ class _NewsDetailScreenState extends State<NewsDetailScreen> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              'news.minRead'.tr(namedArgs: {'count': '${widget.article.readingTimeMin}'}),
+                              'news.minRead'.tr(
+                                namedArgs: {
+                                  'count': '${widget.article.readingTimeMin}',
+                                },
+                              ),
                               style: const TextStyle(
                                 color: Colors.white70,
                                 fontSize: 12,
@@ -552,7 +556,13 @@ class _NewsDetailScreenState extends State<NewsDetailScreen> {
       },
       child: FilledButton.icon(
         onPressed: () {
-          Navigator.pushNamed(context, '/news/quiz', arguments: widget.article);
+          Navigator.pushNamed(
+            context,
+            '/news/quiz',
+            arguments: widget.article.copyWith(
+              content: _fullContent ?? widget.article.content,
+            ),
+          );
         },
         icon: const Icon(Icons.quiz_rounded, size: 20),
         label: Text('news.takeQuiz'.tr()),

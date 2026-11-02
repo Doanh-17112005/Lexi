@@ -43,6 +43,8 @@ class VocabProvider extends ChangeNotifier {
   String? _errorMessage;
   bool _isLoading = false;
   String? _selectedTag;
+  String? _selectedLevel;
+  String _searchQuery = '';
 
   // Dictionary lookup state
   DictionaryLookupResult? _lookupResult;
@@ -66,6 +68,8 @@ class VocabProvider extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get isLoading => _isLoading;
   String? get selectedTag => _selectedTag;
+  String? get selectedLevel => _selectedLevel;
+  String get searchQuery => _searchQuery;
 
   List<String> get availableTags {
     final tags = <String>{};
@@ -77,12 +81,35 @@ class VocabProvider extends ChangeNotifier {
   }
 
   List<VocabWord> get filteredWords {
-    if (_selectedTag == null) return _words;
-    return _words.where((w) => w.tags?.contains(_selectedTag) == true).toList();
+    final query = _searchQuery.trim().toLowerCase();
+    return _words.where((word) {
+      if (_selectedTag != null && word.tags?.contains(_selectedTag) != true) {
+        return false;
+      }
+      if (_selectedLevel != null && word.difficultyLevel != _selectedLevel) {
+        return false;
+      }
+      if (query.isNotEmpty &&
+          !word.word.toLowerCase().contains(query) &&
+          !word.definition.toLowerCase().contains(query)) {
+        return false;
+      }
+      return true;
+    }).toList();
   }
 
   void setTagFilter(String? tag) {
     _selectedTag = tag;
+    notifyListeners();
+  }
+
+  void setLevelFilter(String? level) {
+    _selectedLevel = level;
+    notifyListeners();
+  }
+
+  void setSearchQuery(String query) {
+    _searchQuery = query;
     notifyListeners();
   }
 
@@ -93,37 +120,92 @@ class VocabProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
+    final localWords = <VocabWord>[];
+    String? loadError;
     final result = await getWordsUseCase(NoParams());
     result.fold(
       (failure) {
-        _errorMessage = _getFailureMessage(failure);
-        _words = [];
+        loadError = _getFailureMessage(failure);
       },
       (words) {
-        _words = words;
-        _errorMessage = null;
+        localWords.addAll(words);
       },
     );
 
-    // Merge with backend collection (words saved from book reader, YouTube, news).
+    final backendMaster = <VocabWord>[];
+    final backendCollection = <VocabWord>[];
     if (_apiClient != null) {
       try {
-        final backendWords = await _fetchBackendCollection();
-        final localWordSet = {for (final w in _words) w.word.toLowerCase()};
-        final merged = [
-          ..._words,
-          ...backendWords.where(
-            (w) => !localWordSet.contains(w.word.toLowerCase()),
-          ),
-        ];
-        _words = merged;
+        backendMaster.addAll(await _fetchBackendMaster());
+      } catch (error) {
+        loadError ??= 'Failed to load the vocabulary library: $error';
+      }
+      try {
+        backendCollection.addAll(await _fetchBackendCollection());
       } catch (_) {
-        // Backend unavailable — local words still shown.
+        // Collection requires a valid session; the public master list remains usable.
       }
     }
 
+    final mergedByWord = <String, VocabWord>{};
+    for (final word in [
+      ...backendMaster,
+      ...localWords,
+      ...backendCollection,
+    ]) {
+      final key = word.word.toLowerCase();
+      final existing = mergedByWord[key];
+      mergedByWord[key] = existing == null ? word : _mergeWord(existing, word);
+    }
+    _words = mergedByWord.values.toList()
+      ..sort((a, b) => a.word.toLowerCase().compareTo(b.word.toLowerCase()));
+    _errorMessage = _words.isEmpty ? loadError : null;
+
     _isLoading = false;
     notifyListeners();
+  }
+
+  VocabWord _mergeWord(VocabWord base, VocabWord incoming) => VocabWord(
+    id: incoming.id ?? base.id,
+    userVocabularyId: incoming.userVocabularyId ?? base.userVocabularyId,
+    word: incoming.word,
+    definition: incoming.definition.isNotEmpty
+        ? incoming.definition
+        : base.definition,
+    isLearned: incoming.isLearned || base.isLearned,
+    pronunciation: incoming.pronunciation ?? base.pronunciation,
+    audioUrl: incoming.audioUrl ?? base.audioUrl,
+    example: incoming.example ?? base.example,
+    partOfSpeech: incoming.partOfSpeech ?? base.partOfSpeech,
+    difficultyLevel: incoming.difficultyLevel ?? base.difficultyLevel,
+    tags: incoming.tags ?? base.tags,
+  );
+
+  Future<List<VocabWord>> _fetchBackendMaster() async {
+    final response = await _apiClient!.get(
+      '/vocabulary/items?limit=100&offset=0',
+    );
+    final items = response['data'] as List<dynamic>? ?? [];
+    return items
+        .map((raw) {
+          final item = raw as Map<String, dynamic>;
+          final translation = item['translation'] as Map<String, dynamic>?;
+          final examples = translation?['examples'] as List<dynamic>?;
+          return VocabWord(
+            word: item['word'] as String? ?? '',
+            definition: _cleanDefinition(item['definition'] as String? ?? ''),
+            pronunciation: item['pronunciation'] as String?,
+            audioUrl: item['audio_url'] as String?,
+            example: examples?.whereType<String>().firstOrNull,
+            partOfSpeech: item['part_of_speech'] as String?,
+            difficultyLevel: item['difficulty_level'] as String?,
+            tags: (item['tags'] as List<dynamic>?)
+                ?.whereType<String>()
+                .toList(),
+          );
+        })
+        .where((word) => word.word.isNotEmpty)
+        .toList();
   }
 
   @override
@@ -154,6 +236,7 @@ class VocabProvider extends ChangeNotifier {
             pronunciation: vocab['pronunciation'] as String?,
             audioUrl: vocab['audio_url'] as String?,
             partOfSpeech: vocab['part_of_speech'] as String?,
+            difficultyLevel: vocab['difficulty_level'] as String?,
             isLearned: (item['status'] as String?) == 'mastered',
             tags: tags,
           );
@@ -165,10 +248,7 @@ class VocabProvider extends ChangeNotifier {
   /// Strips auto-generated seeded/placeholder definitions that were inserted
   /// by data-import scripts and should not be surfaced to the user.
   static String _cleanDefinition(String raw) {
-    const seededPrefixes = [
-      'Seeded from crawled',
-      '#N/A',
-    ];
+    const seededPrefixes = ['Seeded from crawled', '#N/A'];
     for (final prefix in seededPrefixes) {
       if (raw.startsWith(prefix)) return '';
     }

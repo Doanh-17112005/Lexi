@@ -53,6 +53,115 @@ enum GameType {
   };
 }
 
+class GameExplanation {
+  final String summary;
+  final String rule;
+  final String example;
+  final Map<String, String> optionExplanations;
+
+  const GameExplanation({
+    this.summary = '',
+    this.rule = '',
+    this.example = '',
+    this.optionExplanations = const {},
+  });
+
+  factory GameExplanation.fromJson(Map<String, dynamic>? json) {
+    final data = json ?? const <String, dynamic>{};
+    final rawOptions = data['option_explanations'];
+    return GameExplanation(
+      summary: data['summary'] as String? ?? '',
+      rule: data['rule'] as String? ?? '',
+      example: data['example'] as String? ?? '',
+      optionExplanations: rawOptions is Map
+          ? rawOptions.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            )
+          : const {},
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'summary': summary,
+    'rule': rule,
+    'example': example,
+    'option_explanations': optionExplanations,
+  };
+}
+
+class GameAnswerFeedback {
+  final String sessionId;
+  final String itemId;
+  final String answer;
+  final bool isCorrect;
+  final String correctAnswer;
+  final GameExplanation explanation;
+  final bool alreadySubmitted;
+
+  const GameAnswerFeedback({
+    required this.sessionId,
+    required this.itemId,
+    required this.answer,
+    required this.isCorrect,
+    required this.correctAnswer,
+    required this.explanation,
+    this.alreadySubmitted = false,
+  });
+
+  factory GameAnswerFeedback.fromJson(Map<String, dynamic> json) {
+    return GameAnswerFeedback(
+      sessionId: json['session_id'] as String? ?? '',
+      itemId: json['item_id'] as String? ?? '',
+      answer: json['answer'] as String? ?? '',
+      isCorrect: json['is_correct'] as bool? ?? false,
+      correctAnswer: json['correct_answer'] as String? ?? '',
+      explanation: GameExplanation.fromJson(
+        json['explanation'] as Map<String, dynamic>?,
+      ),
+      alreadySubmitted: json['already_submitted'] as bool? ?? false,
+    );
+  }
+}
+
+class GameSessionProgress {
+  final String sessionId;
+  final String gameType;
+  final String? cefrLevel;
+  final String status;
+  final Map<String, dynamic> content;
+  final List<GameAnswerFeedback> answers;
+
+  const GameSessionProgress({
+    required this.sessionId,
+    required this.gameType,
+    required this.cefrLevel,
+    required this.status,
+    required this.content,
+    required this.answers,
+  });
+
+  bool get canResume => status == 'in_progress' && content.isNotEmpty;
+
+  factory GameSessionProgress.fromJson(Map<String, dynamic> json) {
+    return GameSessionProgress(
+      sessionId: json['session_id'] as String? ?? '',
+      gameType: json['game_type'] as String? ?? '',
+      cefrLevel: json['cefr_level'] as String?,
+      status: json['status'] as String? ?? 'in_progress',
+      content: Map<String, dynamic>.from(
+        json['content'] as Map? ?? const <String, dynamic>{},
+      ),
+      answers: (json['answers'] as List<dynamic>? ?? const [])
+          .whereType<Map>()
+          .map(
+            (answer) =>
+                GameAnswerFeedback.fromJson(Map<String, dynamic>.from(answer)),
+          )
+          .toList(),
+    );
+  }
+}
+
 // ── GameWord ──────────────────────────────────────────────────────────────────
 
 /// A vocabulary word fetched from the database for use in any game.
@@ -160,6 +269,7 @@ class ScrambleWord {
   final List<String> correctOrder;
   final String hint;
   final String definition;
+  final String? exampleSentence;
 
   /// IPA pronunciation (field: ipa_pronunciation | ipa).
   final String? ipaPronunciation;
@@ -175,6 +285,7 @@ class ScrambleWord {
     this.correctOrder = const [],
     this.hint = '',
     this.definition = '',
+    this.exampleSentence,
     this.ipaPronunciation,
     this.xpValue = 10,
     this.letterCount = 0,
@@ -200,6 +311,7 @@ class ScrambleWord {
           [],
       hint: json['hint'] as String? ?? '',
       definition: json['definition'] as String? ?? '',
+      exampleSentence: json['example_sentence'] as String?,
       ipaPronunciation:
           json['ipa_pronunciation'] as String? ?? json['ipa'] as String?,
       xpValue: json['xp_value'] as int? ?? 10,
@@ -216,6 +328,7 @@ class ScrambleWord {
     'correct_order': correctOrder,
     'hint': hint,
     'definition': definition,
+    if (exampleSentence != null) 'example_sentence': exampleSentence,
     if (ipaPronunciation != null) 'ipa_pronunciation': ipaPronunciation,
     'xp_value': xpValue,
     'letter_count': letterCount,
@@ -231,6 +344,7 @@ class ScrambleWord {
     List<String>? correctOrder,
     String? hint,
     String? definition,
+    String? exampleSentence,
     String? ipaPronunciation,
     int? xpValue,
     int? letterCount,
@@ -244,11 +358,13 @@ class ScrambleWord {
       correctOrder: correctOrder ?? this.correctOrder,
       hint: hint ?? this.hint,
       definition: definition ?? this.definition,
+      exampleSentence: exampleSentence ?? this.exampleSentence,
       ipaPronunciation: ipaPronunciation ?? this.ipaPronunciation,
       xpValue: xpValue ?? this.xpValue,
       letterCount: letterCount ?? this.letterCount,
       cefrLevel: cefrLevel ?? this.cefrLevel,
-      vietnameseTranslation: vietnameseTranslation ?? this.vietnameseTranslation,
+      vietnameseTranslation:
+          vietnameseTranslation ?? this.vietnameseTranslation,
     );
   }
 }
@@ -597,7 +713,8 @@ class SpellingBeeWord {
       xpFull: xpFull ?? this.xpFull,
       xpPartial: xpPartial ?? this.xpPartial,
       maxReplays: maxReplays ?? this.maxReplays,
-      vietnameseTranslation: vietnameseTranslation ?? this.vietnameseTranslation,
+      vietnameseTranslation:
+          vietnameseTranslation ?? this.vietnameseTranslation,
     );
   }
 }
@@ -858,7 +975,8 @@ class HangmanGame {
       maxLives: maxLives ?? this.maxLives,
       baseXp: baseXp ?? this.baseXp,
       availableCategories: availableCategories ?? this.availableCategories,
-      vietnameseTranslation: vietnameseTranslation ?? this.vietnameseTranslation,
+      vietnameseTranslation:
+          vietnameseTranslation ?? this.vietnameseTranslation,
     );
   }
 }
@@ -878,6 +996,7 @@ class FillBlankQuestion {
   final String grammarTip;
   final String cefrLevel;
   final String explanation;
+  final GameExplanation explanationDetail;
 
   const FillBlankQuestion({
     required this.id,
@@ -887,6 +1006,7 @@ class FillBlankQuestion {
     this.grammarTip = '',
     this.cefrLevel = 'A1',
     this.explanation = '',
+    this.explanationDetail = const GameExplanation(),
   });
 
   factory FillBlankQuestion.fromJson(Map<String, dynamic> json) {
@@ -915,6 +1035,9 @@ class FillBlankQuestion {
       grammarTip: json['grammar_tip'] as String? ?? '',
       cefrLevel: json['cefr_level'] as String? ?? 'A1',
       explanation: json['explanation'] as String? ?? '',
+      explanationDetail: GameExplanation.fromJson(
+        json['explanation_detail'] as Map<String, dynamic>?,
+      ),
     );
   }
 
@@ -926,6 +1049,7 @@ class FillBlankQuestion {
     'grammar_tip': grammarTip,
     'cefr_level': cefrLevel,
     'explanation': explanation,
+    'explanation_detail': explanationDetail.toJson(),
   };
 
   FillBlankQuestion copyWith({
@@ -936,6 +1060,7 @@ class FillBlankQuestion {
     String? grammarTip,
     String? cefrLevel,
     String? explanation,
+    GameExplanation? explanationDetail,
   }) {
     return FillBlankQuestion(
       id: id ?? this.id,
@@ -945,6 +1070,7 @@ class FillBlankQuestion {
       grammarTip: grammarTip ?? this.grammarTip,
       cefrLevel: cefrLevel ?? this.cefrLevel,
       explanation: explanation ?? this.explanation,
+      explanationDetail: explanationDetail ?? this.explanationDetail,
     );
   }
 }
@@ -1021,6 +1147,7 @@ class GrammarQuizQuestion {
   final String explanation;
   final String topic;
   final String cefrLevel;
+  final GameExplanation explanationDetail;
 
   const GrammarQuizQuestion({
     required this.id,
@@ -1030,6 +1157,7 @@ class GrammarQuizQuestion {
     this.explanation = '',
     this.topic = '',
     this.cefrLevel = 'A1',
+    this.explanationDetail = const GameExplanation(),
   });
 
   factory GrammarQuizQuestion.fromJson(Map<String, dynamic> json) {
@@ -1055,6 +1183,9 @@ class GrammarQuizQuestion {
       explanation: json['explanation'] as String? ?? '',
       topic: json['topic'] as String? ?? '',
       cefrLevel: json['cefr_level'] as String? ?? 'A1',
+      explanationDetail: GameExplanation.fromJson(
+        json['explanation_detail'] as Map<String, dynamic>?,
+      ),
     );
   }
 
@@ -1066,6 +1197,7 @@ class GrammarQuizQuestion {
     'explanation': explanation,
     'topic': topic,
     'cefr_level': cefrLevel,
+    'explanation_detail': explanationDetail.toJson(),
   };
 
   GrammarQuizQuestion copyWith({
@@ -1076,6 +1208,7 @@ class GrammarQuizQuestion {
     String? explanation,
     String? topic,
     String? cefrLevel,
+    GameExplanation? explanationDetail,
   }) {
     return GrammarQuizQuestion(
       id: id ?? this.id,
@@ -1085,6 +1218,7 @@ class GrammarQuizQuestion {
       explanation: explanation ?? this.explanation,
       topic: topic ?? this.topic,
       cefrLevel: cefrLevel ?? this.cefrLevel,
+      explanationDetail: explanationDetail ?? this.explanationDetail,
     );
   }
 }

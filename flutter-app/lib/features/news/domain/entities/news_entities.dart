@@ -81,6 +81,24 @@ class NewsArticle {
     'reading_time_min': readingTimeMin,
     'highlighted_words': highlightedWords,
   };
+
+  NewsArticle copyWith({String? content}) => NewsArticle(
+    id: id,
+    title: title,
+    description: description,
+    content: content ?? this.content,
+    url: url,
+    imageUrl: imageUrl,
+    sourceName: sourceName,
+    author: author,
+    publishedAt: publishedAt,
+    category: category,
+    provider: provider,
+    cefrLevel: cefrLevel,
+    cefrInfo: cefrInfo,
+    readingTimeMin: readingTimeMin,
+    highlightedWords: highlightedWords,
+  );
 }
 
 /// CEFR level information for display.

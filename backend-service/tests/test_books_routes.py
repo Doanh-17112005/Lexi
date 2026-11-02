@@ -9,6 +9,8 @@ Tests cover:
                     _normalize_gutendex_book, _normalize_open_library_book
 """
 
+import hashlib
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
@@ -494,14 +496,16 @@ class TestGetBookQuiz:
             "questions": [
                 {
                     "id": "gutenberg-11_ch1_q1",
-                    "question": "What is the main theme?",
-                    "options": ["Option A", "Option B", "Option C", "Option D"],
-                    "correct_index": 0,
-                    "explanation": "It focuses on identity.",
+                    "question": "Complete the exact sentence: Alice felt _____.",
+                    "options": ["ordinary", "curious", "distant", "careful"],
+                    "correct_index": 1,
+                    "explanation": "The source excerpt says: Alice felt curious.",
                 }
             ],
             "xp_reward": 25,
-            "is_stub": True,
+            "is_stub": False,
+            "generator": "lexilingo-excerpt-cloze-v2",
+            "source": "chapter_excerpt",
         }
         mock_result.source = "db"
         mock_result.is_stale = False
@@ -511,7 +515,14 @@ class TestGetBookQuiz:
             mock_cache.get_or_fetch.return_value = mock_result
             MockCache.return_value = mock_cache
 
-            response = await no_db_client.get(f"{BASE}/gutenberg-11/quiz")
+            response = await no_db_client.get(
+                f"{BASE}/gutenberg-11/quiz",
+                params={
+                    "chapter_text": (
+                        "Alice felt curious when the white rabbit hurried past her."
+                    )
+                },
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -533,7 +544,14 @@ class TestGetBookQuiz:
             mock_cache.get_or_fetch.return_value = mock_result
             MockCache.return_value = mock_cache
 
-            response = await no_db_client.get(f"{BASE}/gutenberg-74/quiz")
+            response = await no_db_client.get(
+                f"{BASE}/gutenberg-74/quiz",
+                params={
+                    "chapter_text": (
+                        "Tom watched the river quietly while the morning sun rose."
+                    )
+                },
+            )
 
         assert response.json()["xp_reward"] == 25
 
@@ -549,7 +567,15 @@ class TestGetBookQuiz:
             mock_cache.get_or_fetch.return_value = mock_result
             MockCache.return_value = mock_cache
 
-            response = await no_db_client.get(f"{BASE}/gutenberg-11/quiz?chapter=3")
+            response = await no_db_client.get(
+                f"{BASE}/gutenberg-11/quiz",
+                params={
+                    "chapter": "3",
+                    "chapter_text": (
+                        "Alice opened the little door and looked into the garden."
+                    ),
+                },
+            )
 
         assert response.status_code == 200
         assert response.json()["chapter"] == 3
@@ -560,21 +586,48 @@ class TestGetBookQuiz:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_cache_key_includes_book_id_and_chapter(self, no_db_client: AsyncClient):
+    async def test_missing_chapter_text_returns_422(self, no_db_client: AsyncClient):
+        response = await no_db_client.get(f"{BASE}/gutenberg-11/quiz")
+        assert response.status_code == 422
+        assert "real excerpt" in response.text
+
+    @pytest.mark.asyncio
+    async def test_cache_key_includes_excerpt_fingerprint(
+        self, no_db_client: AsyncClient
+    ):
         mock_result = MagicMock()
-        mock_result.data = {"questions": [], "xp_reward": 25, "is_stub": True}
+        mock_result.data = {"questions": [], "xp_reward": 25, "is_stub": False}
         mock_result.source = "db"
         mock_result.is_stale = False
+        excerpt = "Elizabeth read the letter twice before answering her sister."
+        title = "Pride and Prejudice"
+        level = "B2"
 
         with patch("app.routes.books.APICacheService") as MockCache:
             mock_cache = AsyncMock()
             mock_cache.get_or_fetch.return_value = mock_result
             MockCache.return_value = mock_cache
 
-            await no_db_client.get(f"{BASE}/gutenberg-1342/quiz?chapter=5")
+            await no_db_client.get(
+                f"{BASE}/gutenberg-1342/quiz",
+                params={
+                    "chapter": "5",
+                    "book_title": title,
+                    "cefr_level": level,
+                    "chapter_text": excerpt,
+                },
+            )
 
         call_kwargs = mock_cache.get_or_fetch.call_args.kwargs
-        assert call_kwargs["cache_key"] == "books:quiz:gutenberg-1342:ch:5"
+        fingerprint = hashlib.sha1(
+            f"{title}|{level}|{excerpt}".encode("utf-8")
+        ).hexdigest()[:12]
+        assert call_kwargs["cache_key"] == (
+            f"books:quiz:v2:gutenberg-1342:ch:5:ctx:{fingerprint}"
+        )
+        assert call_kwargs["api_name"] == "books_quiz"
+        assert call_kwargs["cost"] == 0
+        assert call_kwargs["redis_ttl"] == 86400
 
     def test_contextual_generator_uses_chapter_excerpt(self):
         from app.routes.books import _generate_contextual_book_quiz
@@ -592,10 +645,33 @@ class TestGetBookQuiz:
 
         assert quiz["is_stub"] is False
         assert quiz["source"] == "chapter_excerpt"
-        assert quiz["generator"] == "lexilingo-contextual-quiz-v1"
+        assert quiz["generator"] == "lexilingo-excerpt-cloze-v2"
         assert len(quiz["questions"]) == 3
-        assert quiz["questions"][0]["correct_index"] == 0
-        assert quiz["questions"][1]["options"][0] in {"followed", "curious", "strange"}
+        assert [q["correct_index"] for q in quiz["questions"]] == [0, 3, 2]
+        source_sentences = {
+            "Alice felt curious as she followed the strange rabbit.",
+            "The journey became more confusing when the hallway changed again.",
+        }
+        for question in quiz["questions"]:
+            assert "_____" in question["question"]
+            assert len(question["options"]) == 4
+            answer = question["options"][question["correct_index"]]
+            assert answer.lower() in " ".join(source_sentences).lower()
+            assert any(sentence in question["explanation"] for sentence in source_sentences)
+            assert "Alice's Adventures in Wonderland" not in question["explanation"]
+            assert "A2" not in question["explanation"]
+
+    def test_generator_refuses_metadata_only_or_short_context(self):
+        from app.routes.books import _generate_contextual_book_quiz
+
+        with pytest.raises(ValueError, match="real chapter excerpt"):
+            _generate_contextual_book_quiz(
+                book_id="gutenberg-11",
+                chapter=1,
+                book_title="Alice's Adventures in Wonderland",
+                cefr_level="A2",
+                chapter_text=None,
+            )
 
     @pytest.mark.asyncio
     async def test_contextual_route_cache_key_includes_context_hash(self, no_db_client: AsyncClient):
@@ -628,7 +704,11 @@ class TestGetBookQuiz:
         assert data["source"] == "chapter_excerpt"
         assert data["book_id"] == "gutenberg-11"
         call_kwargs = mock_cache.get_or_fetch.call_args.kwargs
-        assert call_kwargs["cache_key"].startswith("books:quiz:gutenberg-11:ch:2:ctx:")
+        assert call_kwargs["cache_key"].startswith(
+            "books:quiz:v2:gutenberg-11:ch:2:ctx:"
+        )
+        assert call_kwargs["cost"] == 0
+        assert call_kwargs["redis_ttl"] == 86400
 
 
 # ============================================================================

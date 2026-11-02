@@ -10,8 +10,10 @@ import 'package:lexilingo_app/features/games/data/services/game_pronunciation_se
 import 'package:lexilingo_app/features/games/domain/entities/game_entities.dart';
 import 'package:lexilingo_app/features/games/presentation/providers/games_provider.dart';
 import 'package:lexilingo_app/features/games/presentation/screens/game_result_screen.dart';
+import 'package:lexilingo_app/features/games/presentation/widgets/game_answer_explanation.dart';
 import 'package:lexilingo_app/features/games/presentation/widgets/game_load_state.dart';
 import 'package:lexilingo_app/features/games/presentation/widgets/game_powerup_tray.dart';
+import 'package:lexilingo_app/features/games/presentation/widgets/game_question_navigation.dart';
 
 const _spellingBeePowerUps = [
   ShopItemEntity.effectMistakeShield,
@@ -23,7 +25,8 @@ const _spellingBeePowerUps = [
 /// Spelling Bee game screen.
 ///
 /// Player listens to TTS audio and types the word they heard.
-/// Tracks replays and gives IPA + definition after each answer.
+/// Supports previous/next navigation, locked answer review,
+/// and detailed vocabulary explanations.
 class SpellingBeeScreen extends StatefulWidget {
   const SpellingBeeScreen({super.key});
 
@@ -42,10 +45,18 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
   bool _answered = false;
   bool _isCorrect = false;
   bool _isFinishing = false;
+  bool _isSavingAnswer = false;
+  bool _restoredSession = false;
+  String? _answerSaveError;
   String? _audioErrorMessage;
   String? _translationReveal;
   int _scoreMultiplier = 1;
   final Map<String, String> _submittedAnswers = {};
+
+  final Set<int> _answeredIndices = {};
+  final Map<int, String> _userAnswers = {};
+  final Map<int, bool> _answerCorrectness = {};
+  final Map<int, GameExplanation> _explanations = {};
 
   @override
   void initState() {
@@ -53,7 +64,7 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
     _pronunciationService = sl<GamePronunciationService>();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<GamesProvider>().loadSpellingBee().then((_) {
-        if (mounted) _initWord();
+        if (mounted) _loadCurrentWord();
       });
     });
   }
@@ -65,9 +76,53 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
     super.dispose();
   }
 
+  void _loadCurrentWord() {
+    final provider = context.read<GamesProvider>();
+    final game = provider.spellingBee;
+    if (game == null || game.words.isEmpty) return;
+    _restoreSessionAnswers(provider, game);
+
+    if (_answeredIndices.contains(_wordIndex)) {
+      final word = game.words[_wordIndex];
+      setState(() {
+        _gameLoaded = true;
+        _answered = true;
+        _isCorrect = _answerCorrectness[_wordIndex] ?? false;
+        _inputController.text = _userAnswers[_wordIndex] ?? '';
+        _translationReveal = word.vietnameseTranslation;
+        _audioErrorMessage = null;
+      });
+    } else {
+      _initWord();
+    }
+  }
+
+  void _restoreSessionAnswers(GamesProvider provider, SpellingBeeGame game) {
+    if (_restoredSession) return;
+    _restoredSession = true;
+    for (var index = 0; index < game.words.length; index++) {
+      final word = game.words[index];
+      final feedback = provider.sessionAnswers[word.wordId];
+      if (feedback == null) continue;
+      _submittedAnswers[word.wordId] = feedback.answer;
+      _userAnswers[index] = feedback.answer;
+      _answerCorrectness[index] = feedback.isCorrect;
+      _explanations[index] = feedback.explanation;
+      _answeredIndices.add(index);
+      if (feedback.isCorrect) _correctCount++;
+    }
+    if (_answeredIndices.isNotEmpty) {
+      _wordIndex = List.generate(game.words.length, (index) => index)
+          .firstWhere(
+            (index) => !_answeredIndices.contains(index),
+            orElse: () => game.words.length - 1,
+          );
+    }
+  }
+
   void _initWord() {
     final game = context.read<GamesProvider>().spellingBee;
-    if (game == null) return;
+    if (game == null || _wordIndex >= game.words.length) return;
     setState(() {
       _gameLoaded = true;
       _playsLeft = game.words[_wordIndex].maxReplays;
@@ -92,9 +147,7 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
         setState(() => _translationReveal = word.vietnameseTranslation);
         break;
       case ShopItemEntity.effectSkipToken:
-        _submittedAnswers[word.wordId] = '';
-        setState(() => _answered = true);
-        Future.delayed(const Duration(milliseconds: 300), _nextWord);
+        _skipCurrentWord();
         break;
       case ShopItemEntity.effectScoreMultiplier:
         final multiplier = (effects['multiplier'] as num?)?.toInt() ?? 2;
@@ -127,20 +180,116 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
   }
 
   void _submitAnswer() {
-    if (_answered) return;
-    final game = context.read<GamesProvider>().spellingBee!;
+    if (_answered || _answeredIndices.contains(_wordIndex)) return;
+    final provider = context.read<GamesProvider>();
+    final game = provider.spellingBee!;
     final word = game.words[_wordIndex];
-    final input = _inputController.text.trim().toLowerCase();
-    final correct = word.word.toLowerCase();
-    _submittedAnswers[word.wordId] = _inputController.text.trim();
-    final isCorrect = input == correct;
+    final input = _inputController.text.trim();
+    final isCorrect = input.toLowerCase() == word.word.toLowerCase();
+
+    _submittedAnswers[word.wordId] = input;
+    _userAnswers[_wordIndex] = input;
+    _answerCorrectness[_wordIndex] = isCorrect;
+    _answeredIndices.add(_wordIndex);
+
     if (isCorrect) {
       _correctCount++;
     }
+
+    final explanation = GameExplanation(
+      summary:
+          '${'games.correctAnswer'.tr()}: ${word.word} (${word.ipaPronunciation ?? ''}) - ${word.vietnameseTranslation ?? word.definition}',
+      rule: word.definition,
+      example: word.exampleSentence ?? word.definition,
+    );
+    _explanations[_wordIndex] = explanation;
+
     setState(() {
       _answered = true;
       _isCorrect = isCorrect;
     });
+
+    _persistAnswer(game.sessionId, word.wordId, input, _wordIndex);
+  }
+
+  void _skipCurrentWord() {
+    if (_answered || _answeredIndices.contains(_wordIndex)) return;
+    final provider = context.read<GamesProvider>();
+    final game = provider.spellingBee;
+    if (game == null) return;
+    final word = game.words[_wordIndex];
+
+    _submittedAnswers[word.wordId] = '';
+    _userAnswers[_wordIndex] = '';
+    _answerCorrectness[_wordIndex] = false;
+    _answeredIndices.add(_wordIndex);
+
+    final explanation = GameExplanation(
+      summary:
+          '${'games.correctAnswer'.tr()}: ${word.word} (${word.ipaPronunciation ?? ''}) - ${word.vietnameseTranslation ?? word.definition}',
+      rule: word.definition,
+      example: word.exampleSentence ?? word.definition,
+    );
+    _explanations[_wordIndex] = explanation;
+
+    setState(() {
+      _answered = true;
+      _isCorrect = false;
+    });
+
+    _persistAnswer(game.sessionId, word.wordId, '', _wordIndex);
+  }
+
+  Future<void> _persistAnswer(
+    String sessionId,
+    String itemId,
+    String answer,
+    int wordIndex,
+  ) async {
+    if (sessionId.isEmpty || _isSavingAnswer) return;
+    setState(() {
+      _isSavingAnswer = true;
+      _answerSaveError = null;
+    });
+    final feedback = await context.read<GamesProvider>().saveAnswer(
+      sessionId: sessionId,
+      itemId: itemId,
+      answer: answer,
+    );
+    if (!mounted) return;
+    setState(() {
+      _isSavingAnswer = false;
+      if (feedback == null) {
+        _answerSaveError = 'save_failed';
+        return;
+      }
+      final wasCorrect = _answerCorrectness[wordIndex] ?? false;
+      if (wasCorrect != feedback.isCorrect) {
+        _correctCount += feedback.isCorrect ? 1 : -1;
+      }
+      _answerCorrectness[wordIndex] = feedback.isCorrect;
+      _explanations[wordIndex] = feedback.explanation;
+      if (_wordIndex == wordIndex) _isCorrect = feedback.isCorrect;
+      _answerSaveError = null;
+    });
+  }
+
+  void _retryCurrentAnswerSave() {
+    final game = context.read<GamesProvider>().spellingBee;
+    if (game == null) return;
+    final word = game.words[_wordIndex];
+    _persistAnswer(
+      game.sessionId,
+      word.wordId,
+      _submittedAnswers[word.wordId] ?? '',
+      _wordIndex,
+    );
+  }
+
+  void _previousWord() {
+    if (_wordIndex <= 0 || _isFinishing) return;
+    setState(() => _wordIndex--);
+    _loadCurrentWord();
   }
 
   void _nextWord() {
@@ -152,7 +301,7 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
       return;
     }
     setState(() => _wordIndex++);
-    _initWord();
+    _loadCurrentWord();
   }
 
   Future<void> _abandonGame() async {
@@ -205,10 +354,7 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
       correctAnswers: _correctCount,
       answers: [
         for (final word in game.words)
-          {
-            'id': word.wordId,
-            'answer': _submittedAnswers[word.wordId] ?? '',
-          },
+          {'id': word.wordId, 'answer': _submittedAnswers[word.wordId] ?? ''},
       ],
     );
     if (!mounted) return;
@@ -252,7 +398,7 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
               message: 'games.loadFailed'.tr(),
               onRetry: () async {
                 await provider.loadSpellingBee();
-                if (mounted) _initWord();
+                if (mounted) _loadCurrentWord();
               },
             );
           }
@@ -261,7 +407,7 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
               message: 'games.emptyGame'.tr(),
               onRetry: () async {
                 await provider.loadSpellingBee();
-                if (mounted) _initWord();
+                if (mounted) _loadCurrentWord();
               },
             );
           }
@@ -271,7 +417,14 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
             );
           }
           final word = game.words[_wordIndex];
-          final isPlaying = _pronunciationService.isPlaying;
+          final isWordAnswered = _answeredIndices.contains(_wordIndex);
+          final explanation =
+              _explanations[_wordIndex] ??
+              GameExplanation(
+                summary: '${'games.correctAnswer'.tr()}: ${word.word}',
+                rule: word.definition,
+                example: word.vietnameseTranslation ?? word.definition,
+              );
 
           return Scaffold(
             appBar: AppBar(
@@ -284,208 +437,168 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
                     'total': '${game.words.length}',
                   },
                 ),
-                style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
               ),
+              centerTitle: true,
             ),
             body: Column(
               children: [
-                LinearProgressIndicator(
-                  value: _wordIndex / game.words.length,
-                  backgroundColor: AppColors.grey200,
-                  color: AppColors.primary,
-                  minHeight: 4,
-                ),
+                // Question progress dots
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  child: GamePowerUpTray(
-                    availableTypes: _spellingBeePowerUps,
-                    enabled: !_answered,
-                    onUse: _onPowerUpUsed,
+                  padding: const EdgeInsets.only(top: 8, bottom: 6),
+                  child: GameQuestionProgress(
+                    currentIndex: _wordIndex,
+                    total: game.words.length,
+                    answeredIndices: _answeredIndices,
                   ),
                 ),
                 Expanded(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
                     child: Column(
                       children: [
-                        const SizedBox(height: 20),
-                        if (_translationReveal != null)
-                          Container(
-                            width: double.infinity,
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: const EdgeInsets.all(12),
+                        GamePowerUpTray(
+                          availableTypes: _spellingBeePowerUps,
+                          enabled: !isWordAnswered,
+                          onUse: _onPowerUpUsed,
+                        ),
+                        const SizedBox(height: 12),
+                        // Listen button
+                        GestureDetector(
+                          onTap: _playAudio,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            width: 88,
+                            height: 88,
                             decoration: BoxDecoration(
-                              color: AppColors.purple.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(8),
+                              shape: BoxShape.circle,
+                              color: _pronunciationService.isPlaying
+                                  ? AppColors.primary
+                                  : AppColors.primary.withValues(alpha: 0.12),
                               border: Border.all(
-                                color: AppColors.purple.withValues(alpha: 0.4),
+                                color: AppColors.primary,
+                                width: 2,
                               ),
                             ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.translate_rounded,
-                                  size: 16,
-                                  color: AppColors.purple,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    _translationReveal!,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        // Audio error banner
-                        if (_audioErrorMessage != null)
-                          Container(
-                            width: double.infinity,
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .errorContainer,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.volume_off_rounded,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onErrorContainer,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'spellingBee.audioError'.tr(),
-                                    style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onErrorContainer,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ),
-                                TextButton(
-                                  onPressed: () {
-                                    _pronunciationService.clearError();
-                                    setState(() => _audioErrorMessage = null);
-                                    _playAudio();
-                                  },
-                                  child: Text('spellingBee.retryAudio'.tr()),
-                                ),
-                              ],
-                            ),
-                          ),
-                        // Big listen button
-                        Semantics(
-                          button: true,
-                          label: _playsLeft > 0
-                              ? 'spellingBee.listenButtonLabel'.tr()
-                              : 'spellingBee.noPlaysLeft'.tr(),
-                          child: GestureDetector(
-                            onTap: _playsLeft > 0 && !isPlaying
-                                ? _playAudio
-                                : null,
-                            child: AnimatedContainer(
-                              duration: MediaQuery.of(context).disableAnimations
-                                  ? Duration.zero
-                                  : const Duration(milliseconds: 200),
-                              width: 120,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  colors: _playsLeft > 0
-                                      ? [
-                                          AppColors.primary,
-                                          const Color(0xFF38B2FF),
-                                        ]
-                                      : [AppColors.grey300, AppColors.grey200],
-                                ),
-                                boxShadow: _playsLeft > 0
-                                    ? [
-                                        BoxShadow(
-                                          color: AppColors.primary.withValues(
-                                            alpha: 0.4,
-                                          ),
-                                          blurRadius: 16,
-                                          offset: const Offset(0, 6),
-                                        ),
-                                      ]
-                                    : [],
-                              ),
-                              alignment: Alignment.center,
-                              child: Icon(
-                                isPlaying
-                                    ? Icons.volume_up
-                                    : Icons.play_arrow_rounded,
-                                color: Theme.of(context).colorScheme.surface,
-                                size: 52,
-                              ),
+                            child: Icon(
+                              _pronunciationService.isPlaying
+                                  ? Icons.volume_up
+                                  : Icons.volume_up_outlined,
+                              size: 40,
+                              color: _pronunciationService.isPlaying
+                                  ? Colors.white
+                                  : AppColors.primary,
                             ),
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 8),
                         Text(
-                          'spellingBee.playsLeftLabel'.tr(
-                            namedArgs: {
-                              'plays': '$_playsLeft',
-                              'max': '${word.maxReplays}',
-                            },
-                          ),
+                          'spellingBee.tapToListen'.tr(),
                           style: TextStyle(
+                            fontSize: 13,
                             color: Theme.of(
                               context,
                             ).colorScheme.onSurfaceVariant,
-                            fontSize: 13,
                           ),
                         ),
-                        const SizedBox(height: 32),
+                        if (_audioErrorMessage != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            _audioErrorMessage!,
+                            style: const TextStyle(
+                              color: AppColors.errorBright,
+                              fontSize: 12,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        if (_translationReveal != null)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.translate,
+                                  size: 16,
+                                  color: AppColors.primary,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _translationReveal!,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         // Input field
                         TextField(
                           controller: _inputController,
-                          enabled: !_answered,
+                          enabled: !isWordAnswered,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                          textCapitalization: TextCapitalization.none,
                           textAlign: TextAlign.center,
                           style: const TextStyle(
-                            fontSize: 20,
+                            fontSize: 22,
                             fontWeight: FontWeight.bold,
+                            letterSpacing: 2,
                           ),
                           decoration: InputDecoration(
                             hintText: 'spellingBee.inputHint'.tr(),
-                            hintStyle: TextStyle(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
+                            hintStyle: const TextStyle(
+                              fontSize: 16,
+                              letterSpacing: 0,
+                              fontWeight: FontWeight.normal,
                             ),
                             filled: true,
                             fillColor: Theme.of(context).colorScheme.surface,
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 16,
+                              horizontal: 20,
+                            ),
                             border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(
-                                color: AppColors.grey300,
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
                               ),
                             ),
                             focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(14),
                               borderSide: const BorderSide(
                                 color: AppColors.primary,
                                 width: 2,
                               ),
                             ),
                           ),
-                          onSubmitted: (_) => _answered ? null : _submitAnswer(),
+                          onSubmitted: (_) =>
+                              isWordAnswered ? null : _submitAnswer(),
                         ),
                         const SizedBox(height: 16),
-                        if (!_answered) ...[
+                        if (!isWordAnswered) ...[
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -493,8 +606,9 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppColors.primary,
                                 foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -509,104 +623,40 @@ class _SpellingBeeScreenState extends State<SpellingBeeScreen> {
                             ),
                           ),
                         ] else ...[
-                          // Answer revealed
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: _isCorrect
-                                  ? AppColors.greenSuccess.withValues(alpha: 0.1)
-                                  : Colors.red.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: _isCorrect
-                                    ? AppColors.greenSuccess
-                                    : AppColors.errorBright,
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                Text(
-                                  _isCorrect
-                                      ? 'spellingBee.correctFeedback'.tr()
-                                      : 'spellingBee.answerRevealLabel'.tr(),
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: _isCorrect
-                                        ? AppColors.greenSuccess
-                                        : AppColors.errorBright,
-                                  ),
-                                ),
-                                if (!_isCorrect) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    word.word,
-                                    style: TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.bold,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface,
-                                    ),
-                                  ),
-                                ],
-                                if (word.ipaPronunciation?.isNotEmpty ??
-                                    false) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    word.ipaPronunciation!,
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                      fontStyle: FontStyle.italic,
-                                    ),
-                                  ),
-                                ],
-                                if (word.definition.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    word.definition,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface,
-                                      height: 1.4,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
-                              ],
-                            ),
+                          // Detailed explanation card
+                          GameAnswerExplanationCard(
+                            isCorrect: _isCorrect,
+                            selectedAnswer: _userAnswers[_wordIndex] ?? '',
+                            correctAnswer: word.word,
+                            explanation: explanation,
+                            fallbackRule: word.definition,
+                            fallbackExample: word.ipaPronunciation != null
+                                ? 'Phát âm: ${word.ipaPronunciation}'
+                                : '',
                           ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: _nextWord,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primary,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: Text(
-                                _wordIndex + 1 < game.words.length
-                                    ? 'spellingBee.nextWordButton'.tr()
-                                    : 'spellingBee.seeResultsButton'.tr(),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
+                          GameAnswerSaveStatus(
+                            isSaving: _isSavingAnswer,
+                            error: _answerSaveError,
+                            onRetry: _retryCurrentAnswerSave,
                           ),
                         ],
+                        const SizedBox(height: 20),
+                        // Navigation Buttons (Previous & Next)
+                        GameQuestionNavigation(
+                          canGoPrevious: _wordIndex > 0,
+                          canGoNext:
+                              isWordAnswered &&
+                              !_isSavingAnswer &&
+                              _answerSaveError == null,
+                          isLastQuestion: _wordIndex == game.words.length - 1,
+                          isBusy:
+                              _isFinishing ||
+                              _isSavingAnswer ||
+                              _answerSaveError != null,
+                          onPrevious: _previousWord,
+                          onNext: _nextWord,
+                        ),
+                        const SizedBox(height: 16),
                       ],
                     ),
                   ),

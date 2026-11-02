@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../../core/services/user_scope_service.dart';
 import '../../../../core/network/api_config.dart';
 import '../../../../core/services/local_cache_service.dart';
 import '../../domain/entities/podcast_entities.dart';
@@ -20,6 +21,11 @@ class PodcastRepository {
   final LocalCacheService _cache;
 
   static const String _followsKey = 'podcast_follows';
+
+  Future<String> _scopedKey(String prefix, [String? suffix]) async {
+    final scope = await UserScopeService.getScopeOrDefault();
+    return '$prefix:$scope${suffix == null ? '' : ':$suffix'}';
+  }
 
   PodcastRepository({http.Client? client, LocalCacheService? cache})
     : _client = client ?? http.Client(),
@@ -178,15 +184,19 @@ class PodcastRepository {
   ///
   /// Returns null if no history has been recorded yet.
   Future<ListeningHistory?> getListeningHistory(String episodeGuid) async {
-    final key = 'podcast:history:$episodeGuid';
-    final raw = await _cache.get(key);
+    final key = await _scopedKey('podcast:history', episodeGuid);
+    var raw = await _cache.get(key);
+    if (raw == null) {
+      raw = await _cache.get('podcast:history:$episodeGuid');
+      if (raw != null) await _cache.put(key, 'podcast', raw);
+    }
     if (raw == null) return null;
     return ListeningHistory.fromJson(raw as Map<String, dynamic>);
   }
 
   /// Save or update listening history for an episode in local SQLite cache.
   Future<void> saveListeningHistory(ListeningHistory history) async {
-    final key = 'podcast:history:${history.episodeGuid}';
+    final key = await _scopedKey('podcast:history', history.episodeGuid);
     await _cache.put(key, 'podcast', history.toJson());
   }
 
@@ -195,7 +205,12 @@ class PodcastRepository {
   /// Get all podcasts the user is following from local SharedPreferences.
   Future<List<UserPodcastFollow>> getFollowedPodcasts() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getStringList(_followsKey) ?? [];
+    final key = await _scopedKey(_followsKey);
+    var raw = prefs.getStringList(key);
+    if (raw == null) {
+      raw = prefs.getStringList(_followsKey) ?? [];
+      if (raw.isNotEmpty) await prefs.setStringList(key, raw);
+    }
     return raw
         .map(
           (s) =>
@@ -209,7 +224,8 @@ class PodcastRepository {
   /// Silently ignores duplicates (matched by [feedUrl]).
   Future<void> followPodcast(Podcast podcast) async {
     final prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getStringList(_followsKey) ?? [];
+    final key = await _scopedKey(_followsKey);
+    final existing = prefs.getStringList(key) ?? [];
 
     final alreadyFollowed = existing.any((s) {
       final decoded = jsonDecode(s) as Map<String, dynamic>;
@@ -225,26 +241,27 @@ class PodcastRepository {
     );
 
     existing.add(jsonEncode(follow.toJson()));
-    await prefs.setStringList(_followsKey, existing);
+    await prefs.setStringList(key, existing);
   }
 
   /// Remove a followed podcast from local SharedPreferences.
   Future<void> unfollowPodcast(String feedUrl) async {
     final prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getStringList(_followsKey) ?? [];
+    final key = await _scopedKey(_followsKey);
+    final existing = prefs.getStringList(key) ?? [];
 
     final updated = existing.where((s) {
       final decoded = jsonDecode(s) as Map<String, dynamic>;
       return decoded['feed_url'] != feedUrl;
     }).toList();
 
-    await prefs.setStringList(_followsKey, updated);
+    await prefs.setStringList(key, updated);
   }
 
   /// Check whether the user is currently following a podcast.
   Future<bool> isFollowing(String feedUrl) async {
     final prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getStringList(_followsKey) ?? [];
+    final existing = prefs.getStringList(await _scopedKey(_followsKey)) ?? [];
     return existing.any((s) {
       final decoded = jsonDecode(s) as Map<String, dynamic>;
       return decoded['feed_url'] == feedUrl;

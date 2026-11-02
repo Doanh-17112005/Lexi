@@ -2,8 +2,22 @@
 
 > Bảng đối chiếu trực tiếp với nội dung công việc Tuần 1–12: [`KE_HOACH_12_TUAN_TRANG_THAI.md`](KE_HOACH_12_TUAN_TRANG_THAI.md).
 >
-> Cập nhật: 01/11/2026
+> Cập nhật: 02/11/2026
 > Phạm vi hiện tại: Flutter Web, Admin React Web, Backend, AI Service, Database và MCP. Không build/test native, không deploy hoặc thay đổi production.
+
+## Cập nhật 02/11/2026 — Mini-game và truy cập nhanh
+
+| Hạng mục | Trạng thái | Kết quả đã kiểm chứng |
+|---|---|---|
+| 6 mini-game hiện có | Hoàn thành trong worktree | Word Scramble, Fill Blank, Matching, Spelling Bee, Hangman và Grammar Quiz không tự chuyển câu; có Câu trước/Câu tiếp theo, khóa đáp án đã chốt, giải thích, progress/loading/error/tổng kết |
+| Session/XP game | Hoàn thành trong worktree | Resume sau refresh bằng Backend session; answer/result/XP lưu Backend; khóa theo user, từ chối answer ID trùng và ghi giao dịch cả khi XP bằng 0 để chống cấp lại |
+| Tin tức | Hoàn thành fallback + quiz có căn cứ | Không key vẫn lấy BBC RSS thật; full-content dùng fetch chống SSRF; quiz v3 chỉ nhận nội dung bài thật, cache theo fingerprint và từ chối bài thiếu ngữ cảnh thay vì dựng lời giải |
+| YouTube | Hoàn thành fallback | Không key vẫn tìm video thật qua Atom feed của kênh học tiếng Anh; đã bỏ toàn bộ metadata video hardcode không được dùng; có empty/error rõ ràng |
+| Podcast | Hoàn thành trong phạm vi hiện có | Tìm kiếm curated feed thật, phát Web có preparing/error/retry; lưu thời lượng nghe thực và follow theo user scope |
+| Sách | Hoàn thành trong phạm vi hiện có | 24 sách public-domain Gutenberg A1–C2; quiz v2 chỉ tạo cloze từ excerpt thật; reading progress/bookmark/cache theo user scope |
+| Từ vựng | Hoàn thành sửa dữ liệu và UI | Public master catalog được merge với dữ liệu user; search + lọc CEFR + responsive; sửa tại chỗ 12 definition EN bị ghi nhầm bằng nghĩa VI, giữ nguyên ID và quan hệ |
+
+Kiểm thử lượt này: 400 backend test tập trung pass; Python compile pass; News full-content → quiz chạy thật với bài NASA (1.654 ký tự, 5 câu, source `article_context`); 7/7 locale JSON hợp lệ; `dart analyze` riêng News báo `No issues found`. Flutter test/full analyze/build Web hiện vẫn treo trong runner hoặc kết thúc lỗi ghi telemetry ngoài workspace, nên không ghi nhận PASS cho các bước đó. Domain bài BBC bị máy local ánh xạ về loopback và được lớp chống SSRF chặn đúng; RSS/list/search vẫn hoạt động, full-content/quiz hiển thị lỗi thay vì sinh dữ liệu giả.
 
 ## Trạng thái hiện tại
 
