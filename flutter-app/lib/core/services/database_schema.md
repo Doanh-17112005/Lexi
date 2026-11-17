@@ -1,4 +1,10 @@
-# LexiLingo Database Schema
+# Legacy SQLite Schema (Archived)
+
+> This document describes an early device-local prototype and is not the current
+> LexiLingo data architecture. The Web-first app uses backend APIs with
+> PostgreSQL as the authoritative learning store. Browser persistence is
+> user-scoped and feature-specific (for example chat restore/offline queues);
+> Web never substitutes mock data for production learning records.
 
 ## Database Information
 - **Database Name**: `lexilingo.db`
@@ -307,7 +313,7 @@ ORDER BY e.lastAccessedAt DESC;
 - `daDates**: All date-only values are stored as TEXT in "YYYY-MM-DD" format
 4. **Cascading Deletes**: Deleting a user automatically deletes all their related data (enrollments, progress, vocabulary, etc.)
 5. **Progress Values**: All progress values are stored as REAL between 0.0 and 1.0 (representing 0% to 100%)
-6. **Platform Support**: Database is only available on mobile (iOS/Android) and desktop. Web uses mock data.
+6. **Platform Support (historical)**: This SQLite prototype targeted native clients. The current Web app uses browser adapters and backend data, not mock records.
 7. **User ID**: User IDs are TEXT to support Firebase UID format (e.g., "firebase:abc123...")
 
 **Modified Tables:**
@@ -433,13 +439,15 @@ Added columns to `courses` table:
 2. **Timestamps**: All timestamps are stored as TEXT in ISO 8601 format (e.g., "2026-01-13T10:30:00.000Z")
 3. **Cascading Deletes**: Deleting a course automatically deletes all related lessons and progress records
 4. **Progress Values**: All progress values are stored as REAL between 0.0 and 1.0 (representing 0% to 100%)
-5. **Platform Support**: Database is only available on mobile (iOS/Android) and desktop. Web uses mock data.
+5. **Platform Support (historical)**: The current Web-first client does not use this schema as its system of record.
 
 ---
 
 ## Implementation
 
-See: `/lib/core/services/database_helper.dart` for the complete implementation.
+For the remaining feature-scoped chat persistence, see
+`/lib/core/database/database_helper.dart` and its Web adapter. For current
+learning data, see the Backend models and API repositories instead.
 
 **Key Classes**:
 - `DatabaseHelper`: Singleton class managing database connection and operations

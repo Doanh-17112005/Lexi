@@ -1,6 +1,6 @@
 # Flutter App
 
-> Cross-platform language learning application for iOS, Android, and Web.
+> Web-first learner application. Native platform folders are retained for possible future work, but the current build, QA, and deployment target is Flutter Web.
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.24.0-02569B?logo=flutter)](https://flutter.dev)
 [![Dart](https://img.shields.io/badge/Dart-3.8.1-0175C2?logo=dart)](https://dart.dev)
@@ -35,7 +35,7 @@
 ### 🔔 Engagement
 - **Push Notifications** — Learning reminders
 - **Daily Goals** — Set and track targets
-- **Offline Mode** — Learn without internet
+- **Resilient browser state** — User-scoped local-first state for supported flows; server data remains authoritative
 
 ---
 
@@ -80,7 +80,7 @@ feature/
 | Language | Dart 3.8 |
 | State | Provider |
 | DI | GetIt |
-| Local DB | SQLite (sqflite) |
+| Client persistence | SharedPreferences/browser storage adapters; feature-scoped local-first caches |
 | Auth | Firebase Auth |
 | AI | Google Generative AI |
 
@@ -99,7 +99,7 @@ Repository (Data Access)
     ↓
 Data Source
 ├── Remote → Backend API / AI Service
-└── Local  → SQLite Database
+└── Local  → user-scoped browser storage (supported features only)
 ```
 
 ---
@@ -139,13 +139,12 @@ This script enforces `.env.production` usage for release build, validates Google
 
 ---
 
-## Platforms
+## Active platform
 
-| Platform | Minimum Version |
-|----------|-----------------|
-| iOS | 13.0+ |
-| Android | API 24 (7.0) |
-| Web | Modern browsers |
+| Platform | Support status |
+|----------|----------------|
+| Web | Active build/test/deployment target; modern Chrome-compatible browsers |
+| iOS / Android / desktop | Source scaffolding only; not claimed as tested in the current scope |
 
 ---
 

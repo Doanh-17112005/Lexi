@@ -108,6 +108,10 @@ abstract class  LocaleKeys {
   static const auth_emailVerificationResendSuccess = 'auth.emailVerificationResendSuccess';
   static const auth_emailVerificationResendError = 'auth.emailVerificationResendError';
   static const auth_emailVerificationBackToLogin = 'auth.emailVerificationBackToLogin';
+  static const auth_emailVerificationInProgress = 'auth.emailVerificationInProgress';
+  static const auth_emailVerificationSuccess = 'auth.emailVerificationSuccess';
+  static const auth_emailVerificationInvalid = 'auth.emailVerificationInvalid';
+  static const auth_emailVerificationRetry = 'auth.emailVerificationRetry';
   static const auth_passwordMismatch = 'auth.passwordMismatch';
   static const auth = 'auth';
   static const home_greeting = 'home.greeting';

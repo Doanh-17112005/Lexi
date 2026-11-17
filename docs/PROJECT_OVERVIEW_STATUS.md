@@ -16,7 +16,7 @@ Dự án được tổ chức theo monorepo với năm thành phần có thể v
 
 | Thành phần | Vai trò | Công nghệ chính |
 |---|---|---|
-| `flutter-app/` | Ứng dụng cho người học trên mobile/web/desktop | Flutter, Dart, Provider, GetIt, sqflite |
+| `flutter-app/` | Ứng dụng Web-first cho người học | Flutter, Dart, Provider, GetIt, browser storage adapters |
 | `backend-service/` | API nghiệp vụ, xác thực, dữ liệu học tập và gamification | FastAPI, SQLAlchemy async, PostgreSQL, Redis, Celery |
 | `ai-service/` | Trợ giảng AI, TRACE-CAG, voice, chấm phát âm và IELTS | FastAPI, LangGraph, KuzuDB, Gemini/Groq/Ollama, Whisper, Piper, HuBERT |
 | `admin-service/` | Trang quản trị nội dung, người dùng và vận hành | React, TypeScript, Vite, TanStack Query, Recharts |
@@ -53,8 +53,8 @@ Luồng học điển hình: đăng nhập → chọn khóa học/bài học →
 - IELTS: danh sách đề, phiên thi, kết quả và hỗ trợ AI chấm Writing/Speaking.
 - Sáu mini-game có phiên chơi phía server và kiểm tra thời lượng nhằm hạn chế gian lận.
 - Khu nội dung gồm tin tức, sách, podcast và YouTube; hỗ trợ quiz, phụ đề/dịch và ghi nhận thời gian học.
-- Offline cache và hàng đợi đồng bộ lại khi có mạng.
-- Giao diện đa ngôn ngữ; dự án hiện hướng tới iOS, Android, Web và desktop.
+- Cache cục bộ theo user và hàng đợi đồng bộ cho các luồng Web được hỗ trợ; Backend vẫn là nguồn dữ liệu chuẩn.
+- Giao diện đa ngôn ngữ; phạm vi build/test/deploy hiện tại là Flutter Web. Các thư mục native chỉ được giữ làm nền cho công việc tương lai.
 
 ### 3.2 AI và luyện giao tiếp
 

@@ -11,7 +11,7 @@ import anyio
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 
@@ -48,6 +48,19 @@ from app.schemas.user import UserResponse
 from app.schemas.common import MessageResponse, ErrorCodes, ErrorDetail, ErrorResponse
 
 logger = logging.getLogger(__name__)
+
+
+async def _revoke_user_refresh_tokens(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Revoke every active refresh token after a password credential change."""
+    now = datetime.now(timezone.utc)
+    await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.is_revoked.is_(False),
+        )
+        .values(is_revoked=True, revoked_at=now)
+    )
 
 
 async def _auto_verify_local_email_if_needed(
@@ -277,7 +290,7 @@ async def refresh_token(
             RefreshToken.is_revoked == False,
             RefreshToken.is_used == False,
             RefreshToken.expires_at > datetime.now(timezone.utc)
-        )
+        ).with_for_update()
     )
     db_token = result.scalar_one_or_none()
     
@@ -363,17 +376,6 @@ async def logout(
     """
     Logout user.
     """
-    if request.refresh_token:
-        # FIX: Revoke token in DB
-        result = await db.execute(
-            select(RefreshToken).where(RefreshToken.token == request.refresh_token)
-        )
-        db_token = result.scalar_one_or_none()
-        if db_token:
-            db_token.is_revoked = True
-            db_token.revoked_at = datetime.now(timezone.utc)
-            await db.commit()
-
     if authorization and authorization.lower().startswith("bearer "):
         access_token = authorization.split(" ", 1)[1].strip()
         payload = decode_token(access_token)
@@ -384,11 +386,26 @@ async def logout(
                 if isinstance(exp, (int, float))
                 else None
             )
-            await TokenBlacklist.add(
+            if not await TokenBlacklist.add(
                 access_token,
                 expires_at=expires_at,
                 user_id=str(payload.get("sub") or ""),
-            )
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Authentication service temporarily unavailable",
+                )
+
+    if request.refresh_token:
+        # FIX: Revoke token in DB
+        result = await db.execute(
+            select(RefreshToken).where(RefreshToken.token == request.refresh_token)
+        )
+        db_token = result.scalar_one_or_none()
+        if db_token:
+            db_token.is_revoked = True
+            db_token.revoked_at = datetime.now(timezone.utc)
+            await db.commit()
 
     return MessageResponse(
         message="Logged out successfully",
@@ -601,9 +618,10 @@ async def facebook_login(
     # Some basic checks before we accept the token:
     if "firebase" not in claims or claims["firebase"].get("sign_in_provider") != "facebook.com":
         logger.warning("Token provided to /facebook is not a facebook.com login token.")
-        # We might still accept it if we want generic /firebase endpoint, 
-        # but let's restrict to facebook for exactness.
-        pass # Optional to raise error here, we let get_or_create handle the user.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Facebook ID token",
+        )
 
     email = claims.get("email")
     if not email:
@@ -614,10 +632,16 @@ async def facebook_login(
 
     try:
         user = await get_or_create_user_from_claims(db, claims)
-    except Exception as exc:
+    except ValueError:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc)
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Facebook ID token",
+        )
+    except Exception:
+        logger.exception("Facebook account mapping failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Facebook login could not be completed",
         )
 
     # For admin source verify the role (as done in Google logic)
@@ -662,7 +686,8 @@ async def facebook_login(
 async def change_password(
     request: ChangePasswordRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    authorization: str | None = Header(default=None),
 ):
     """
     Change password for authenticated user.
@@ -686,7 +711,26 @@ async def change_password(
     # Update password
     current_user.hashed_password = await get_password_hash_async(request.new_password)
     current_user.updated_at = datetime.now(timezone.utc)
+    await _revoke_user_refresh_tokens(db, current_user.id)
+    if not await TokenBlacklist.revoke_user_access_tokens(str(current_user.id)):
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        )
     await db.commit()
+
+    if authorization and authorization.lower().startswith("bearer "):
+        access_token = authorization.split(" ", 1)[1].strip()
+        payload = decode_token(access_token)
+        expires_at = None
+        if payload and isinstance(payload.get("exp"), (int, float)):
+            expires_at = datetime.fromtimestamp(payload["exp"], timezone.utc)
+        await TokenBlacklist.add(
+            access_token,
+            expires_at=expires_at,
+            user_id=str(current_user.id),
+        )
     
     return MessageResponse(
         message="Password changed successfully",
@@ -754,19 +798,23 @@ async def reset_password(
     """
     Reset password using token from email.
     """
-    from app.core.security import decode_verification_token
+    from app.core.security import decode_verification_token_payload
     
     # Verify token
-    user_id = decode_verification_token(request.token, "password_reset")
-    if not user_id:
+    token_payload = decode_verification_token_payload(
+        request.token,
+        "password_reset",
+    )
+    if not token_payload:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token"
         )
     
     # Find user
+    user_id = token_payload["sub"]
     result = await db.execute(
-        select(User).where(User.id == user_id)
+        select(User).where(User.id == user_id).with_for_update()
     )
     user = result.scalar_one_or_none()
     
@@ -775,10 +823,29 @@ async def reset_password(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+
+    issued_at = token_payload.get("auth_time", token_payload.get("iat"))
+    updated_at = user.updated_at
+    if (
+        not isinstance(issued_at, (int, float))
+        or updated_at is None
+        or float(issued_at) <= updated_at.timestamp()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
     
     # Update password
     user.hashed_password = await get_password_hash_async(request.new_password)
     user.updated_at = datetime.now(timezone.utc)
+    await _revoke_user_refresh_tokens(db, user.id)
+    if not await TokenBlacklist.revoke_user_access_tokens(str(user.id)):
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        )
     await db.commit()
     
     return MessageResponse(

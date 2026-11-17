@@ -63,6 +63,30 @@ def test_normalize_all_tags_preserves_source_and_canonicalizes_daily():
     ) == ["anki_5000", "daily", "travel"]
 
 
+@pytest.mark.parametrize(
+    ("raw_tags", "expected"),
+    [
+        (None, []),
+        ([], []),
+        ([" Travel ", "daily_life", "travel"], ["travel", "daily"]),
+        (
+            {
+                "source": "AI_GENERATED",
+                "source_reference": None,
+                "qa_status": "NEEDS_REVIEW",
+                "topic": ["daily_life", "Travel"],
+            },
+            ["ai_generated", "daily", "travel", "needs_review"],
+        ),
+        ({"business": True, "obsolete": False}, ["business"]),
+    ],
+)
+def test_normalize_all_tags_supports_current_and_legacy_shapes(
+    raw_tags, expected
+):
+    assert normalize_all_tags(raw_tags) == expected
+
+
 def test_balanced_selection_has_exact_quotas_and_unique_items():
     candidates = []
     for topic, quota in STARTER_TOPIC_QUOTAS.items():

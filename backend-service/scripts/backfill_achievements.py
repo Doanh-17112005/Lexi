@@ -14,7 +14,6 @@ from sqlalchemy import func, select
 from app.core.database import AsyncSessionLocal
 from app.models.gamification import Achievement
 
-
 BADGE_CDN_BASE = (
     "https://cdn.jsdelivr.net/gh/InfinityZero3000/"
     "LexiLingo@feature/flutter-app/assets/badges"
@@ -663,7 +662,7 @@ ACHIEVEMENT_SEED: list[dict[str, Any]] = [
     {
         "slug": "feedback_friend",
         "name": "Feedback Friend",
-        "description": "Help others 10 times.",
+        "description": "Help 10 other learners join through your referral.",
         "condition_type": "help_others",
         "condition_value": 10,
         "category": "social",
@@ -706,6 +705,7 @@ ACHIEVEMENT_SEED: list[dict[str, Any]] = [
         "description": "Return after a break and complete a lesson.",
         "condition_type": "comeback",
         "condition_value": 1,
+        "condition_data": {"break_days": 7},
         "category": "milestone",
         "rarity": "rare",
         "xp_reward": 60,

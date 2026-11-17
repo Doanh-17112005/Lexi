@@ -6,6 +6,7 @@ Blacklisted tokens are automatically expired based on their remaining TTL.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -28,6 +29,7 @@ class TokenBlacklist:
     """
     
     PREFIX = "blacklist:token:"
+    USER_CUTOFF_PREFIX = "blacklist:user-cutoff:"
     
     @classmethod
     async def add(
@@ -77,7 +79,7 @@ class TokenBlacklist:
             return False
     
     @classmethod
-    async def is_blacklisted(cls, token: str) -> bool:
+    async def is_blacklisted(cls, token: str) -> bool | None:
         """
         Check if token is blacklisted.
         
@@ -90,9 +92,8 @@ class TokenBlacklist:
         redis_client = await RedisClient.get_instance()
         
         if redis_client is None:
-            # If Redis not available, allow token (fail open)
-            # In production, consider failing closed instead
-            return False
+            logger.error("Redis not available - cannot verify token revocation")
+            return None
         
         try:
             token_key = cls._get_key(token)
@@ -101,8 +102,7 @@ class TokenBlacklist:
             
         except Exception as e:
             logger.error(f"Failed to check blacklist: {e}")
-            # Fail open on error (allow request)
-            return False
+            return None
     
     @classmethod
     async def remove(cls, token: str) -> bool:
@@ -135,3 +135,47 @@ class TokenBlacklist:
         # This avoids storing the full token and is collision-resistant
         token_suffix = token[-32:] if len(token) > 32 else token
         return f"{cls.PREFIX}{token_suffix}"
+
+    @classmethod
+    async def revoke_user_access_tokens(cls, user_id: str) -> bool:
+        """Reject access tokens issued before a credential change."""
+        redis_client = await RedisClient.get_instance()
+        if redis_client is None:
+            logger.warning("Redis not available - user access cutoff was not stored")
+            return False
+
+        try:
+            ttl = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60 + 60
+            await redis_client.setex(
+                f"{cls.USER_CUTOFF_PREFIX}{user_id}",
+                ttl,
+                repr(time.time()),
+            )
+            return True
+        except Exception as exc:
+            logger.error("Failed to store user access cutoff: %s", exc)
+            return False
+
+    @classmethod
+    async def is_user_access_token_revoked(
+        cls,
+        user_id: str,
+        issued_at: int | float | None,
+    ) -> bool | None:
+        """Return whether a token predates the user's credential cutoff."""
+        redis_client = await RedisClient.get_instance()
+        if redis_client is None:
+            logger.error("Redis not available - cannot verify user access cutoff")
+            return None
+
+        try:
+            cutoff = await redis_client.get(f"{cls.USER_CUTOFF_PREFIX}{user_id}")
+            if cutoff is None:
+                return False
+            return float(issued_at or 0) <= float(cutoff)
+        except (TypeError, ValueError) as exc:
+            logger.error("Invalid user access cutoff: %s", exc)
+            return True
+        except Exception as exc:
+            logger.error("Failed to check user access cutoff: %s", exc)
+            return None

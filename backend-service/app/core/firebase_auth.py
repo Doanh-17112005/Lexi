@@ -129,9 +129,15 @@ async def get_or_create_user_from_claims(db: AsyncSession, claims: Dict[str, Any
     avatar_url = claims.get("picture")
     is_verified = bool(claims.get("email_verified", False))
     allowlisted_role = settings.get_admin_role_for_email(email)
+    sign_in_provider = (claims.get("firebase") or {}).get("sign_in_provider")
+    auth_provider = "facebook" if sign_in_provider == "facebook.com" else "google"
 
     if not email:
         raise ValueError("Firebase token missing email")
+    if sign_in_provider not in {"google.com", "facebook.com"}:
+        raise ValueError("Unsupported Firebase sign-in provider")
+    if not is_verified:
+        raise ValueError("Firebase email is not verified")
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -139,8 +145,8 @@ async def get_or_create_user_from_claims(db: AsyncSession, claims: Dict[str, Any
     if user:
         updated = False
 
-        if not user.has_google_auth:
-            user.add_provider("google")
+        if not isinstance(user.provider, list) or auth_provider not in user.provider:
+            user.add_provider(auth_provider)
             updated = True
         if is_verified and not user.is_verified:
             user.is_verified = True
@@ -170,7 +176,7 @@ async def get_or_create_user_from_claims(db: AsyncSession, claims: Dict[str, Any
         hashed_password=await get_password_hash_async(uuid.uuid4().hex),
         display_name=display_name,
         avatar_url=avatar_url,
-        provider=["google"],
+        provider=[auth_provider],
         is_verified=is_verified,
         is_active=True,
         role_id=role_id,

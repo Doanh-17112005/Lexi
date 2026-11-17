@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 import string
-import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -180,6 +180,12 @@ async def claim_referral_code(
     await delete_cached(build_cache_key("wallet", user_id=str(referrer.id)))
     await delete_cached(build_cache_key("wallet", user_id=str(locked_user.id)))
     logger.info("Referral claimed: %s referred %s", referrer.id, locked_user.id)
+
+    # The successful claim is the durable social event for Feedback Friend.
+    from app.services import check_achievements_for_user
+
+    await check_achievements_for_user(db, referrer.id, "social_action")
+    await db.commit()
 
     return ClaimResponse(
         message=f"Referral code applied! You both received {_REFERRAL_REWARD_GEMS} gems.",

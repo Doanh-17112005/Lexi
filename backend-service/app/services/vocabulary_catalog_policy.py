@@ -86,9 +86,27 @@ def _flatten_tag_values(tags: Any) -> Iterable[str]:
         return
 
     if isinstance(tags, Mapping):
-        for key in ("source", "topic", "tags", "anki_tags"):
+        metadata_keys = (
+            "source",
+            "topic",
+            "tags",
+            "anki_tags",
+            "source_reference",
+            "qa_status",
+        )
+        for key in metadata_keys:
             if key in tags:
                 yield from _flatten_tag_values(tags[key])
+
+        # Older imports also used tag-name boolean maps. Preserve enabled keys
+        # and recursively read other unknown values without rewriting storage.
+        for key, value in tags.items():
+            if key in metadata_keys or value is None or value is False:
+                continue
+            if value is True:
+                yield str(key)
+            else:
+                yield from _flatten_tag_values(value)
         return
 
     if isinstance(tags, Sequence):

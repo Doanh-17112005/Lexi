@@ -22,14 +22,20 @@ import asyncio
 import threading
 import uuid
 import pytest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 
 from app.core.security import create_access_token
+from app.schemas.auth import validate_password_strength
 
 
 BASE = "/api/v1/auth"
+
+
+def test_shared_password_policy_rejects_short_composed_password():
+    with pytest.raises(ValueError, match="between 8 and 100"):
+        validate_password_strength("Aa1!")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -668,6 +674,35 @@ class TestLogout:
 
         assert response.status_code == 401
 
+    async def test_revocation_store_unavailable_fails_closed(self, client):
+        token = create_access_token({"sub": "550e8400-e29b-41d4-a716-446655440001"})
+
+        with patch(
+            "app.core.dependencies.TokenBlacklist.is_blacklisted",
+            new=AsyncMock(return_value=None),
+        ):
+            response = await client.get(
+                f"{BASE}/me",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 503
+
+    async def test_logout_fails_when_access_token_cannot_be_revoked(self, client):
+        token = create_access_token({"sub": "550e8400-e29b-41d4-a716-446655440001"})
+
+        with patch(
+            "app.routes.auth.TokenBlacklist.add",
+            new=AsyncMock(return_value=False),
+        ):
+            response = await client.post(
+                f"{BASE}/logout",
+                json={},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 503
+
 
 # ===========================================================================
 # POST /auth/forgot-password
@@ -734,10 +769,10 @@ class TestResetPassword:
 
     async def test_reset_password_invalid_token_returns_400(self, client):
         """An invalid/expired reset token returns 400."""
-        with patch("app.core.security.decode_verification_token", return_value=None):
+        with patch("app.core.security.decode_verification_token_payload", return_value=None):
             response = await client.post(
                 f"{BASE}/reset-password",
-                json={"token": "bad-token", "new_password": "newpassword123"},
+                json={"token": "bad-token", "new_password": "Newpassword!123"},
             )
         assert response.status_code == 400
         assert "Invalid or expired reset token" in response.json()["error"]["message"]
@@ -748,6 +783,7 @@ class TestResetPassword:
         from app.core.database import get_db
 
         user = _make_mock_user()
+        user.updated_at = datetime.now(UTC) - timedelta(days=1)
         session = _make_mock_session(scalar_one_or_none_value=user)
 
         async def mock_get_db():
@@ -757,23 +793,79 @@ class TestResetPassword:
         transport = ASGITransport(app=app)
 
         user_id = str(user.id)
-        with patch("app.core.security.decode_verification_token", return_value=user_id):
+        revoke_tokens = AsyncMock()
+        token_payload = {
+            "sub": user_id,
+            "auth_time": datetime.now(UTC).timestamp(),
+        }
+        with patch("app.core.security.decode_verification_token_payload", return_value=token_payload), \
+             patch("app.routes.auth._revoke_user_refresh_tokens", new=revoke_tokens), \
+             patch("app.routes.auth.TokenBlacklist.revoke_user_access_tokens", new=AsyncMock(return_value=True)):
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 response = await c.post(
                     f"{BASE}/reset-password",
-                    json={"token": "valid-token", "new_password": "newpassword123"},
+                    json={"token": "valid-token", "new_password": "Newpassword!123"},
                 )
         app.dependency_overrides.clear()
 
         assert response.status_code == 200
         data = response.json()
         assert "Password reset successfully" in data["message"]
+        revoke_tokens.assert_awaited_once_with(session, user.id)
+
+    async def test_reset_password_token_cannot_be_replayed(self):
+        from app.main import app
+        from app.core.database import get_db
+
+        user = _make_mock_user()
+        user.updated_at = datetime.now(UTC) - timedelta(days=1)
+        session = _make_mock_session(scalar_one_or_none_value=user)
+
+        async def mock_get_db():
+            yield session
+
+        app.dependency_overrides[get_db] = mock_get_db
+        transport = ASGITransport(app=app)
+        token_payload = {
+            "sub": str(user.id),
+            "auth_time": datetime.now(UTC).timestamp(),
+        }
+        with patch(
+            "app.core.security.decode_verification_token_payload",
+            return_value=token_payload,
+        ), patch(
+            "app.routes.auth._revoke_user_refresh_tokens",
+            new=AsyncMock(),
+        ), patch(
+            "app.routes.auth.TokenBlacklist.revoke_user_access_tokens",
+            new=AsyncMock(return_value=True),
+        ):
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
+                first = await c.post(
+                    f"{BASE}/reset-password",
+                    json={"token": "valid-token", "new_password": "First!Password9"},
+                )
+                replay = await c.post(
+                    f"{BASE}/reset-password",
+                    json={"token": "valid-token", "new_password": "Replay!Password9"},
+                )
+        app.dependency_overrides.clear()
+
+        assert first.status_code == 200
+        assert replay.status_code == 400
 
     async def test_reset_password_too_short_returns_422(self, client):
         """New password shorter than 8 chars triggers 422."""
         response = await client.post(
             f"{BASE}/reset-password",
             json={"token": "some-token", "new_password": "short"},
+        )
+        assert response.status_code == 422
+
+    async def test_reset_password_weak_composition_returns_422(self, client):
+        response = await client.post(
+            f"{BASE}/reset-password",
+            json={"token": "some-token", "new_password": "newpassword123"},
         )
         assert response.status_code == 422
 
@@ -1012,6 +1104,19 @@ class TestFacebookLogin:
             response = await client.post(
                 f"{BASE}/facebook",
                 json={"id_token": "bad-token", "source": "app"},
+            )
+        assert response.status_code == 401
+
+    async def test_facebook_login_rejects_non_facebook_firebase_token(self, client):
+        claims = {
+            "email": "google-user@example.com",
+            "email_verified": True,
+            "firebase": {"sign_in_provider": "google.com"},
+        }
+        with patch("app.core.firebase_auth.verify_firebase_token", return_value=claims):
+            response = await client.post(
+                f"{BASE}/facebook",
+                json={"id_token": "google-firebase-token", "source": "app"},
             )
         assert response.status_code == 401
 
@@ -1307,10 +1412,11 @@ class TestAdminOtp:
 class TestChangePassword:
 
     async def test_change_password_success_returns_200(self, auth_client):
-        with patch("app.routes.auth.verify_password_async", new=AsyncMock(return_value=True)):
+        with patch("app.routes.auth.verify_password_async", new=AsyncMock(return_value=True)), \
+             patch("app.routes.auth.TokenBlacklist.revoke_user_access_tokens", new=AsyncMock(return_value=True)):
             response = await auth_client.post(
                 f"{BASE}/change-password",
-                json={"current_password": "oldpass123", "new_password": "newpass456"},
+                json={"current_password": "oldpass123", "new_password": "Newpass!456"},
             )
         assert response.status_code == 200
 
@@ -1318,7 +1424,7 @@ class TestChangePassword:
         with patch("app.routes.auth.verify_password_async", new=AsyncMock(return_value=False)):
             response = await auth_client.post(
                 f"{BASE}/change-password",
-                json={"current_password": "wrongpass", "new_password": "newpass456"},
+                json={"current_password": "wrongpass", "new_password": "Newpass!456"},
             )
         assert response.status_code == 400
         assert "incorrect" in response.json()["error"]["message"].lower()
@@ -1346,12 +1452,19 @@ class TestChangePassword:
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 response = await c.post(
                     f"{BASE}/change-password",
-                    json={"current_password": "whatever", "new_password": "newpass456"},
+                    json={"current_password": "whatever", "new_password": "Newpass!456"},
                 )
         app.dependency_overrides.clear()
 
         assert response.status_code == 400
         assert "OAuth" in response.json()["error"]["message"]
+
+    async def test_change_password_weak_composition_returns_422(self, auth_client):
+        response = await auth_client.post(
+            f"{BASE}/change-password",
+            json={"current_password": "Oldpass!123", "new_password": "newpassword123"},
+        )
+        assert response.status_code == 422
 
 
 # ===========================================================================

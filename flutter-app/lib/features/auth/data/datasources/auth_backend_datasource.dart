@@ -140,7 +140,11 @@ class AuthBackendDataSource {
   /// POST /auth/logout
   Future<void> logout() async {
     try {
-      await apiClient.post('/auth/logout');
+      final refreshToken = await tokenStorage.getRefreshToken();
+      await apiClient.post(
+        '/auth/logout',
+        body: {'refresh_token': refreshToken},
+      );
     } catch (e) {
       // Even if logout fails, clear local tokens
     } finally {

@@ -8,6 +8,8 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.vocabulary_catalog_policy import normalize_all_tags
+
 
 # ===== VocabularyItem Schemas =====
 
@@ -28,7 +30,16 @@ class VocabularyItemBase(BaseModel):
     audio_url: Optional[str] = Field(None, max_length=500, description="Audio URL")
     part_of_speech: str = Field(..., description="noun, verb, adjective, etc.")
     difficulty_level: str = Field(..., description="A1, A2, B1, B2, C1, C2")
-    tags: Optional[List[str]] = Field(None, description="Tags for categorization")
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Canonical tags for categorization",
+    )
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, v: Any) -> list[str]:
+        """Expose legacy JSON object/list values as one stable API list."""
+        return normalize_all_tags(v)
 
     @field_validator("definition", mode="before")
     @classmethod

@@ -178,6 +178,75 @@ class TestGetVocabularyItems:
         assert response.json() == []
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("stored_tags", "expected_tags"),
+        [
+            (None, []),
+            ([], []),
+            ([" Travel ", "daily_life", "travel"], ["travel", "daily"]),
+            (
+                {
+                    "source": "AI_GENERATED",
+                    "source_reference": None,
+                    "qa_status": "NEEDS_REVIEW",
+                    "topic": ["daily_life", "Travel"],
+                },
+                ["ai_generated", "daily", "travel", "needs_review"],
+            ),
+        ],
+    )
+    async def test_normalizes_legacy_tag_shapes(
+        self,
+        no_auth_client: AsyncClient,
+        stored_tags,
+        expected_tags,
+    ):
+        item = _make_mock_vocab_item()
+        item.tags = stored_tags
+        with patch(
+            "app.crud.vocabulary.vocabulary_crud.get_vocabulary_items",
+            new=AsyncMock(return_value=[item]),
+        ):
+            response = await no_auth_client.get(f"{BASE}/items")
+
+        assert response.status_code == 200
+        assert response.json()[0]["tags"] == expected_tags
+
+    @pytest.mark.asyncio
+    async def test_normalizes_legacy_tags_from_cached_response(
+        self,
+        no_auth_client: AsyncClient,
+    ):
+        now = datetime.now(UTC).isoformat()
+        cached_item = {
+            "id": VOCAB_ID,
+            "word": "hello",
+            "definition": "A greeting",
+            "translation": {"vi": "xin chào"},
+            "part_of_speech": "interjection",
+            "pronunciation": "həˈləʊ",
+            "difficulty_level": "A1",
+            "audio_url": None,
+            "tags": {
+                "source": "AI_GENERATED",
+                "qa_status": "NEEDS_REVIEW",
+            },
+            "course_id": None,
+            "lesson_id": None,
+            "usage_frequency": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+        with patch(
+            "app.routes.vocabulary.get_cached",
+            new=AsyncMock(return_value=[cached_item]),
+        ):
+            response = await no_auth_client.get(f"{BASE}/items")
+
+        assert response.status_code == 200
+        assert response.json()[0]["tags"] == ["ai_generated", "needs_review"]
+
+    @pytest.mark.asyncio
     async def test_does_not_require_auth(self, no_auth_client: AsyncClient):
         with patch("app.crud.vocabulary.vocabulary_crud.get_vocabulary_items", new=AsyncMock(return_value=[])):
             response = await no_auth_client.get(f"{BASE}/items")

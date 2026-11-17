@@ -844,11 +844,29 @@ async def search_books(
             detail=str(e),
         )
     except Exception as e:
-        logger.error("Book search error: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Book search service temporarily unavailable.",
-        )
+        logger.warning("Book search error (falling back to curated): %s", e)
+        q_lower = q.strip().lower()
+        fallback = [
+            b for b in CURATED_BOOKS
+            if (not level or b.get("cefr_level") == level.upper())
+            and (not q_lower or q_lower in b.get("title", "").lower()
+                 or q_lower in b.get("author", "").lower()
+                 or q_lower in b.get("description", "").lower())
+        ]
+        # If query is too specific and nothing matched, return all curated for the level
+        if not fallback:
+            fallback = [
+                b for b in CURATED_BOOKS
+                if not level or b.get("cefr_level") == level.upper()
+            ]
+        return {
+            "books": [_proxy_book_urls(b, request) for b in fallback],
+            "total": len(fallback),
+            "page": 1,
+            "query": q,
+            "source": "curated_fallback",
+            "is_stale": False,
+        }
 
 
 # ── Browse defaults per CEFR level ───────────────────────────────
@@ -912,11 +930,21 @@ async def browse_books(
             headers={"Retry-After": e.reset_time},
         )
     except Exception as e:
-        logger.error("Book browse error: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Book browse service temporarily unavailable.",
-        )
+        logger.warning("Book browse error (falling back to curated): %s", e)
+        fallback = [
+            b for b in CURATED_BOOKS if b.get("cefr_level") == level
+        ]
+        return {
+            "books": [
+                _proxy_book_urls({**b, "cefr_info": CEFR_LEVELS.get(b["cefr_level"], {})}, request)
+                for b in fallback
+            ],
+            "level": level,
+            "page": 1,
+            "topic": search_topic,
+            "total": len(fallback),
+            "source": "curated_fallback",
+        }
 
 
 @router.get("/{book_id}/quiz", summary="Get comprehension quiz for a chapter")

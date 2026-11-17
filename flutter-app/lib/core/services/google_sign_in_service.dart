@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -23,6 +24,12 @@ class GoogleSignInService {
   final GoogleSignIn _googleSignIn;
   String? _lastError;
 
+  static String? _mobileServerClientId() {
+    if (!dotenv.isInitialized) return null;
+    final value = dotenv.maybeGet('GOOGLE_SERVER_CLIENT_ID');
+    return value?.isNotEmpty == true ? value : null;
+  }
+
   String? get lastError => _lastError;
 
   GoogleSignInService({GoogleSignIn? googleSignIn})
@@ -31,11 +38,7 @@ class GoogleSignInService {
           GoogleSignIn(
             scopes: ['email', 'profile'],
             // serverClientId is only for Android/iOS
-            serverClientId: kIsWeb
-                ? null
-                : (dotenv.env['GOOGLE_SERVER_CLIENT_ID']?.isNotEmpty == true
-                    ? dotenv.env['GOOGLE_SERVER_CLIENT_ID']
-                    : null),
+            serverClientId: kIsWeb ? null : _mobileServerClientId(),
           );
 
   /// Sign in with Google and return the Firebase ID token.
@@ -46,6 +49,12 @@ class GoogleSignInService {
       logInfo(_tag, 'Starting Google Sign In...');
 
       if (kIsWeb) {
+        if (Firebase.apps.isEmpty) {
+          _lastError =
+              'Firebase service is unavailable. Please check configuration.';
+          logError(_tag, _lastError!);
+          return null;
+        }
         return await _signInWeb();
       } else {
         return await _signInMobile();
@@ -107,9 +116,15 @@ class GoogleSignInService {
   /// Returns Google id_token if present.
   Future<String?> consumePendingWebRedirectIdToken() async {
     if (!kIsWeb) return null;
+    if (Firebase.apps.isEmpty) {
+      logWarn(_tag, 'Firebase is not initialized; skipping redirect check');
+      return null;
+    }
 
     try {
-      final redirectResult = await FirebaseAuth.instance.getRedirectResult();
+      final redirectResult = await FirebaseAuth.instance
+          .getRedirectResult()
+          .timeout(const Duration(seconds: 2));
       return await _extractGoogleIdTokenAndSignOut(redirectResult);
     } catch (e) {
       logWarn(_tag, 'No pending redirect result or failed to consume: $e');

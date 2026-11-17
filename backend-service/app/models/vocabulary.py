@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import String, Integer, ForeignKey, Float, Text, Index, Enum as SQLEnum, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from typing import Optional
+from typing import Any, Optional
 import enum
 
 from app.core.database import Base
@@ -99,7 +99,9 @@ class VocabularyItem(Base):
     
     # Additional metadata
     usage_frequency: Mapped[int] = mapped_column(Integer, default=0)  # How often word appears
-    tags: Mapped[Optional[dict]] = mapped_column(PortableJSON, nullable=True)  # ["business", "travel", "casual"]
+    # Existing rows contain both metadata objects and legacy tag lists. The API
+    # canonicalizes either JSON shape to List[str] without rewriting this data.
+    tags: Mapped[Any | None] = mapped_column(PortableJSON, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(

@@ -2,8 +2,21 @@
 
 > Bảng đối chiếu trực tiếp với nội dung công việc Tuần 1–12: [`KE_HOACH_12_TUAN_TRANG_THAI.md`](KE_HOACH_12_TUAN_TRANG_THAI.md).
 >
-> Cập nhật: 02/11/2026
+> Cập nhật: 06/11/2026
 > Phạm vi hiện tại: Flutter Web, Admin React Web, Backend, AI Service, Database và MCP. Không build/test native, không deploy hoặc thay đổi production.
+
+## Cập nhật 06/11/2026 — CEFR, achievement và Web-first
+
+| Hạng mục | Trạng thái | Kết quả kiểm chứng offline |
+|---|---|---|
+| Từ vựng CEFR A1–C2 | Hoàn thành dữ liệu/seed offline | 180 mục, đúng 30 từ/cấp; mỗi mục có định nghĩa EN, nghĩa VI, ví dụ, từ loại; natural key không trùng; seed tiếp tục tra theo `word` nên idempotent |
+| Achievement placeholder | Hoàn thành logic | Night Owl/Early Bird đếm `UserProgress.completed_at` theo timezone đã lưu; Conversation Champion đếm `session_summary_shown`; Feedback Friend đếm referral đã claim; Comeback King đo khoảng nghỉ giữa hai lesson pass, ngưỡng 7 ngày từ seed data |
+| 6 mini-game | Rà soát tĩnh hoàn tất | 5 game nhiều câu dùng chung explanation + Câu trước/Câu tiếp theo và khóa câu đã trả lời; Hangman là session một từ nên chỉ hiển thị explanation, không tạo điều hướng giả |
+| YouTube/Tin tức/Podcast/Sách/Từ vựng | Rà soát offline hoàn tất | `dart analyze` trên 6 feature trả `No issues found`; lệnh sau đó lỗi ghi telemetry ngoài workspace nên chỉ ghi nhận kết quả phân tích tĩnh, không coi toàn bộ CLI run là PASS |
+| Flutter test/Chrome | **CHƯA KIỂM THỬ** | Tái hiện treo ở bootstrap Flutter trước dòng test và trước khi mở Chrome, kể cả unit test nhỏ với `--no-version-check`/analytics disabled; tiến trình Dart con do lượt chẩn đoán tạo ra đã được dừng |
+| Tài liệu Web-first | Hoàn thành | README, Flutter README, Architecture, Project Overview, báo cáo Flutter và tài liệu SQLite cũ đã nêu rõ Backend/PostgreSQL là nguồn chuẩn; native/SQLite chỉ là phạm vi lịch sử hoặc feature-scoped |
+
+Kiểm thử không cần service: `34 passed` (3 test seed CEFR + achievement trigger/evaluator bằng pure function/mock), Python compile pass, Ruff F/B checks pass. Docker, PostgreSQL, MongoDB, Redis, server local và mọi integration/E2E phụ thuộc chúng: **CHƯA KIỂM THỬ**.
 
 ## Cập nhật 02/11/2026 — Mini-game và truy cập nhanh
 
@@ -33,11 +46,11 @@ Kiểm thử lượt này: 400 backend test tập trung pass; Python compile pas
 | P1 | Script bootstrap/seed an toàn | Hoàn thành | Không hardcode credential; từ chối production; seed CEFR mặc định tạo draft và không tự sửa user |
 | P1 | Security header Flutter Web | Hoàn thành | Vercel có HSTS, nosniff, frame/referrer/permissions policy; JSON hợp lệ |
 | P1 | Premium Gate Web | Hoàn thành trong code, runner bị chặn | UI chỉ mở khóa bằng entitlement Backend; thiếu DI/network đều fail-closed, không fallback sang SDK client |
-| P2 | Achievement có dữ liệu đo được | Hoàn thành một phần | Badge bài học nhanh dùng thời lượng `UserProgress`; tương tác xã hội dùng lượt follow do người học tạo |
+| P2 | Achievement có dữ liệu đo được | Hoàn thành | Không còn counter placeholder: thời điểm học theo timezone, chat summary event, referral, lesson gap, thời lượng và follow đều dùng bản ghi thật |
 | P2 | Achievement theo kỹ năng | Hoàn thành | Grammar/Culture/Writing/Listening đếm lesson đã pass theo nhãn Lesson/Course và category thật; test achievement 58/58 |
 | P2 | Tương thích SQLAlchemy 2.1 | Hoàn thành | Đã thay toàn bộ `lazy="noload"` bằng `lazy="raise"`; test achievement không còn cảnh báo deprecation |
-| P2 | Kiểm thử tích hợp đầy đủ với PostgreSQL/Redis | Hoàn thành | Đã kết nối PostgreSQL, Redis, MongoDB local container; Alembic head và seed CEFR A1–C2 hoàn tất; E2E smoke test pass 100% |
-| P2 | Flutter Web browser tests | Bị chặn bởi Flutter runner | Chrome headless chạy được với profile workspace; Flutter Web dev server phục vụ tại port 5174; E2E xác nhận qua API contract |
+| P2 | Kiểm thử tích hợp với PostgreSQL/Redis/MongoDB | **CHƯA KIỂM THỬ (06/11)** | Docker và database đang tắt theo yêu cầu; kết quả 02/11 chỉ là lịch sử, không được dùng làm PASS cho lượt hiện tại |
+| P2 | Flutter Web browser tests | **CHƯA KIỂM THỬ** | Flutter CLI treo ở bootstrap trước khi mở Chrome; không khởi động Web server trong lượt này |
 
 ## Thay đổi chính trong worktree
 

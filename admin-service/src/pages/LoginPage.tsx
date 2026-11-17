@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../components/AuthProvider";
+import { getAdminLoginErrorMessage } from "../lib/adminLoginError";
 import { ENV } from "../lib/env";
 import { useI18n } from "../lib/i18n";
 
@@ -42,9 +43,8 @@ export const LoginPage = () => {
     try {
       const role = await signIn(email, password);
       navigate(role === "super_admin" ? "/super" : "/admin", { replace: true });
-    } catch (err: any) {
-      const msg = err?.message || "";
-      setError(msg || t.login.loginFailed || "Đăng nhập thất bại");
+    } catch (err: unknown) {
+      setError(getAdminLoginErrorMessage(err));
     } finally {
       setSubmitting(false);
     }

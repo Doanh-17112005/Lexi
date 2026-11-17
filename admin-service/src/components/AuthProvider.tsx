@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { authStore, resolveRole, Role, UserProfile } from "../lib/auth";
-import { getCurrentUser, loginRequest, googleLoginRequest } from "../lib/authApi";
+import { getCurrentUser, loginRequest, googleLoginRequest, logoutRequest } from "../lib/authApi";
 
 type AuthContextValue = {
   user: UserProfile | null;
@@ -8,7 +8,7 @@ type AuthContextValue = {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<Role>;
   signInWithGoogle: (idToken: string) => Promise<Role>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 };
 
@@ -57,13 +57,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  const signOut = () => {
-    authStore.clear();
-    setUser(null);
-    setRole(null);
-    // Revoke Google session so user can pick account again
-    if (window.google?.accounts?.id) {
-      window.google.accounts.id.disableAutoSelect();
+  const signOut = async () => {
+    const accessToken = authStore.accessToken;
+    const refreshToken = authStore.refreshToken;
+    try {
+      await logoutRequest(accessToken, refreshToken);
+    } finally {
+      authStore.clear();
+      setUser(null);
+      setRole(null);
+      // Revoke Google session so user can pick account again
+      if (window.google?.accounts?.id) {
+        window.google.accounts.id.disableAutoSelect();
+      }
     }
   };
 

@@ -56,7 +56,10 @@ class _LoginPageState extends State<LoginPage> {
     final normalized = message.toLowerCase();
     return normalized.contains('incorrect email or password') ||
         normalized.contains('invalid email or password') ||
-        normalized.contains('auth_invalid');
+        normalized.contains('auth_invalid') ||
+        normalized.contains('email hoặc mật khẩu không đúng') ||
+        normalized.contains('sai email hoặc mật khẩu') ||
+        normalized.contains('mật khẩu không đúng');
   }
 
   bool _isEmailNotVerifiedMessage(String? message) {
@@ -364,6 +367,35 @@ class _LoginPageState extends State<LoginPage> {
                     ),
 
                     SizedBox(height: gap(20, 10)),
+                    if (authProvider.errorMessage != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              color: Colors.red.shade700,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                authProvider.errorMessage!,
+                                style: TextStyle(
+                                  color: Colors.red.shade700,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     SizedBox(
                       height: gap(56, 48),
                       child: ElevatedButton(
@@ -400,19 +432,29 @@ class _LoginPageState extends State<LoginPage> {
                                             ),
                                       ),
                                     );
-                                  } else if (_isInvalidCredentialMessage(
-                                    authProvider.errorMessage,
-                                  )) {
-                                    setState(() => _failedAttempts += 1);
+                                  } else {
+                                    if (_isInvalidCredentialMessage(
+                                      authProvider.errorMessage,
+                                    )) {
+                                      setState(() => _failedAttempts += 1);
+                                    }
 
-                                    if (_isLockedAfterFailures) {
+                                    if (authProvider.errorMessage != null) {
+                                      messenger.hideCurrentSnackBar();
                                       messenger.showSnackBar(
                                         SnackBar(
                                           content: Text(
-                                            'auth.wrongPasswordFiveTimes'.tr(),
+                                            _isLockedAfterFailures
+                                                ? 'auth.wrongPasswordFiveTimes'.tr()
+                                                : authProvider.errorMessage!,
                                           ),
+                                          backgroundColor: Colors.red.shade700,
+                                          behavior: SnackBarBehavior.floating,
                                         ),
                                       );
+                                    }
+
+                                    if (_isLockedAfterFailures) {
                                       await _openForgotPassword();
                                     }
                                   }

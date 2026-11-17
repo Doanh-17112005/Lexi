@@ -11,6 +11,7 @@ from app.core.redis import get_redis
 from app.models.product_event import ProductEvent
 from app.models.user import User
 from app.schemas.product_event import ProductEventBatchCreate, ProductEventBatchResponse
+from app.services import check_achievements_for_user
 from app.services.feature_processor import STREAM_KEY
 from app.services.recommendation_service import INTERACTION_EPOCH_PREFIX
 
@@ -56,6 +57,13 @@ async def ingest_product_events(
         event.event_name == "content_interaction" for event in request.events
     ):
         await _signal_content_interaction(current_user.id)
+
+    if result.rowcount and any(
+        event.event_name == "session_summary_shown" and event.source == "topic_chat"
+        for event in request.events
+    ):
+        await check_achievements_for_user(db, current_user.id, "chat_complete")
+        await db.commit()
 
     return ProductEventBatchResponse(accepted=len(request.events))
 

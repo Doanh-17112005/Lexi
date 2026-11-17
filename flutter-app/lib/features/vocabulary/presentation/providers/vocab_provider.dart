@@ -6,6 +6,7 @@ import 'package:lexilingo_app/core/error/failures.dart';
 import 'package:lexilingo_app/core/network/api_client.dart';
 import 'package:lexilingo_app/core/services/quick_save_vocabulary_service.dart';
 import 'package:lexilingo_app/core/usecase/usecase.dart';
+import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_tags.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/vocab_word.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/usecases/add_word_usecase.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/usecases/get_words_usecase.dart';
@@ -199,9 +200,7 @@ class VocabProvider extends ChangeNotifier {
             example: examples?.whereType<String>().firstOrNull,
             partOfSpeech: item['part_of_speech'] as String?,
             difficultyLevel: item['difficulty_level'] as String?,
-            tags: (item['tags'] as List<dynamic>?)
-                ?.whereType<String>()
-                .toList(),
+            tags: normalizeVocabularyTags(item['tags']),
           );
         })
         .where((word) => word.word.isNotEmpty)
@@ -225,10 +224,6 @@ class VocabProvider extends ChangeNotifier {
           if (vocab == null) return null;
           final word = vocab['word'] as String? ?? '';
           if (word.isEmpty) return null;
-          final rawTags = vocab['tags'];
-          final tags = rawTags is List
-              ? rawTags.whereType<String>().toList()
-              : null;
           return VocabWord(
             userVocabularyId: item['id'] as String?,
             word: word,
@@ -238,7 +233,7 @@ class VocabProvider extends ChangeNotifier {
             partOfSpeech: vocab['part_of_speech'] as String?,
             difficultyLevel: vocab['difficulty_level'] as String?,
             isLearned: (item['status'] as String?) == 'mastered',
-            tags: tags,
+            tags: normalizeVocabularyTags(vocab['tags']),
           );
         })
         .whereType<VocabWord>()

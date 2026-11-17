@@ -71,7 +71,7 @@ class User(Base):
     # Status & Verification (Phase 1 requirements)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Linked auth providers — list of strings, e.g. ["local"], ["google"], ["local", "google"]
+    # Linked auth providers — e.g. ["local"], ["google"], or ["facebook"].
     # Guarded rules:
     #   - Registration only creates ["local"]
     #   - Google OAuth *adds* "google" to this list (never self-registerable as "google")

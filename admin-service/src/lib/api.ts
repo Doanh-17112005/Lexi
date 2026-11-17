@@ -143,7 +143,8 @@ async function tryRefreshToken(): Promise<boolean> {
         return false;
       }
 
-      const data = await response.json();
+      const payload = await response.json();
+      const data = payload?.data ?? payload;
       authStore.accessToken = data.access_token;
       if (data.refresh_token) {
         authStore.refreshToken = data.refresh_token;
@@ -231,7 +232,7 @@ export const apiFetch = async <T>(
     : await response.text();
 
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && !skipAuth) {
       authStore.clear();
       window.location.href = "/login";
     }

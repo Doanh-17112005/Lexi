@@ -2,16 +2,22 @@
 
 > **Cập nhật:** 2026-04-24 | **Flutter Version:** 3.24+ | **Dart SDK:** ^3.8.1 | **App Version:** 0.4.0+4
 
+> **Ghi chú hiện hành (06/11/2026):** dự án đã chuyển sang Web-first. PostgreSQL
+> qua Backend API là nguồn dữ liệu chuẩn; SharedPreferences/browser adapters chỉ
+> giữ state cục bộ theo user cho các luồng được hỗ trợ. Những đoạn mô tả
+> iOS/Android/desktop hoặc SQLite bên dưới là ảnh chụp kiến trúc lịch sử, không
+> phải phạm vi build/test/deploy hiện tại.
+
 ---
 
 ## 1. Tổng Quan Flutter App
 
-Flutter App (`flutter-app/`) là client đa nền tảng (iOS, Android, Web) của LexiLingo:
+Flutter App (`flutter-app/`) hiện là client Web-first của LexiLingo:
 - **State Management**: Provider + GetIt (Dependency Injection)
 - **Architecture**: Clean Architecture per feature (Domain/Data/Presentation)
 - **API**: Dio-based custom ApiClient
 - **Auth**: Firebase (Google + Facebook + Email)
-- **Local DB**: SQLite (sqflite) + SharedPreferences
+- **Client state**: SharedPreferences/browser adapters; Backend là nguồn chuẩn
 - **Voice**: record + just_audio + audio_service
 - **i18n**: easy_localization (assets/i18n/)
 

@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -24,24 +25,71 @@ from app.models.gamification import (
     UserAchievement,
     UserFollowing,
 )
+from app.models.product_event import ProductEvent
+from app.models.proficiency import SkillDailyStat, SkillType
 from app.models.progress import (
     LessonCompletion,
     Streak,
     UserCourseProgress,
     UserProgress,
 )
-from app.models.proficiency import SkillDailyStat, SkillType
+from app.models.reminder import UserReminderPreference
 from app.models.user import User
 from app.models.vocabulary import UserVocabulary, VocabularyStatus
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_USER_TIMEZONE = "Asia/Ho_Chi_Minh"
+DEFAULT_COMEBACK_BREAK_DAYS = 7
+MORNING_HOURS = range(4, 10)
+NIGHT_HOURS = {*range(22, 24), *range(0, 4)}
+
+
+def _study_session_counts(
+    completed_at_values: list[datetime | None], timezone_name: str
+) -> tuple[int, int]:
+    """Count real completions in the learner's local morning/night windows."""
+    try:
+        local_tz = ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        local_tz = ZoneInfo("UTC")
+
+    morning = night = 0
+    for completed_at in completed_at_values:
+        if completed_at is None:
+            continue
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=timezone.utc)
+        local_hour = completed_at.astimezone(local_tz).hour
+        morning += int(local_hour in MORNING_HOURS)
+        night += int(local_hour in NIGHT_HOURS)
+    return morning, night
+
+
+def _longest_learning_break_days(completed_at_values: list[datetime | None]) -> int:
+    """Return the longest whole-day gap between successful lesson completions."""
+    values = []
+    for completed_at in completed_at_values:
+        if completed_at is None:
+            continue
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=timezone.utc)
+        values.append(completed_at.astimezone(timezone.utc))
+    values.sort()
+    if len(values) < 2:
+        return 0
+    return max(
+        (later - earlier).days
+        for earlier, later in zip(values, values[1:], strict=False)
+    )
 
 
 # Mapping of triggers to achievement condition types
 TRIGGER_CONDITIONS = {
     "lesson_complete": [
         "lesson_complete", "xp_earned", "course_complete",
-        "numeric_level", "speed_lesson",
+        "numeric_level", "speed_lesson", "study_time_night",
+        "study_time_morning", "comeback",
     ],
     "streak_update": ["reach_streak", "comeback"],
     "vocab_review": ["vocab_mastered", "vocab_reviewed"],
@@ -195,9 +243,13 @@ class AchievementCheckerService:
         need_quiz = fetch_all or "perfect_score" in condition_types or "quiz_complete" in condition_types or "first_perfect" in condition_types
         need_voice = fetch_all or "voice_practice" in condition_types
         need_level = fetch_all or "numeric_level" in condition_types
-        need_time = fetch_all or "study_time_night" in condition_types or "study_time_morning" in condition_types or "speed_lesson" in condition_types
+        need_study_clock = fetch_all or "study_time_night" in condition_types or "study_time_morning" in condition_types
+        need_speed = fetch_all or "speed_lesson" in condition_types
+        need_comeback = fetch_all or "comeback" in condition_types
         need_skills = fetch_all or any(ct in (condition_types or []) for ct in ["grammar_mastered", "culture_lesson", "writing_complete", "listening_complete"])
-        need_social = fetch_all or any(ct in (condition_types or []) for ct in ["social_interaction", "chat_complete", "help_others"])
+        need_follows = fetch_all or "social_interaction" in (condition_types or [])
+        need_chat = fetch_all or "chat_complete" in (condition_types or [])
+        need_help = fetch_all or "help_others" in (condition_types or [])
         need_challenges = fetch_all or "daily_challenge_complete" in condition_types
         need_games = fetch_all or "game_complete" in condition_types
 
@@ -326,12 +378,34 @@ class AchievementCheckerService:
             )
             stats["numeric_level"] = result.scalar() or 0
 
-        # Fetch time-based study stats. UserProgress is the authoritative
-        # source for elapsed lesson time; zero means the legacy client did not
-        # report a duration and must not count as an instant completion.
-        if need_time:
-            stats["night_study_sessions"] = 0  # Placeholder: needs hour tracking
-            stats["morning_study_sessions"] = 0  # Placeholder: needs hour tracking
+        # Classify actual lesson completions using the learner's saved IANA
+        # timezone. The reminder preference is the current durable timezone
+        # source and its default matches the product's primary locale.
+        if need_study_clock:
+            result = await self.db.execute(
+                select(UserReminderPreference.timezone).where(
+                    UserReminderPreference.user_id == user_id
+                )
+            )
+            timezone_name = result.scalar_one_or_none() or DEFAULT_USER_TIMEZONE
+            result = await self.db.execute(
+                select(UserProgress.completed_at).where(
+                    and_(
+                        UserProgress.user_id == user_id,
+                        UserProgress.status == "completed",
+                        UserProgress.completed_at.is_not(None),
+                    )
+                )
+            )
+            morning, night = _study_session_counts(
+                list(result.scalars().all()), timezone_name
+            )
+            stats["night_study_sessions"] = night
+            stats["morning_study_sessions"] = morning
+
+        # UserProgress is the authoritative source for elapsed lesson time;
+        # zero means the legacy client did not report a duration.
+        if need_speed:
             result = await self.db.execute(
                 select(func.count(UserProgress.id)).where(
                     and_(
@@ -343,6 +417,19 @@ class AchievementCheckerService:
                 )
             )
             stats["speed_lessons"] = result.scalar() or 0
+
+        if need_comeback:
+            result = await self.db.execute(
+                select(LessonCompletion.completed_at).where(
+                    and_(
+                        LessonCompletion.user_id == user_id,
+                        LessonCompletion.is_passed.is_(True),
+                    )
+                )
+            )
+            stats["longest_learning_break_days"] = _longest_learning_break_days(
+                list(result.scalars().all())
+            )
 
         # Fetch skill-based lesson completions from durable pass records.
         # Prefer the lesson-level CEFR skill and fall back to the course-level
@@ -423,8 +510,7 @@ class AchievementCheckerService:
             stats["writing_completed"] = int(writing or 0)
             stats["listening_completed"] = int(listening or 0)
 
-        # Fetch social stats
-        if need_social:
+        if need_follows:
             # A follow is currently the only durable social action recorded by
             # the backend. Count actions initiated by the learner, rather than
             # followers received, so the badge reflects their own activity.
@@ -434,8 +520,27 @@ class AchievementCheckerService:
                 )
             )
             stats["social_interactions"] = result.scalar() or 0
-            stats["chats_completed"] = 0  # Placeholder
-            stats["help_others_count"] = 0  # Placeholder
+
+        # Topic chat emits one durable summary event when a real session ends.
+        if need_chat:
+            result = await self.db.execute(
+                select(func.count(ProductEvent.id)).where(
+                    and_(
+                        ProductEvent.user_id == user_id,
+                        ProductEvent.event_name == "session_summary_shown",
+                        ProductEvent.source == "topic_chat",
+                    )
+                )
+            )
+            stats["chats_completed"] = result.scalar() or 0
+
+        # A successfully claimed referral is the durable proof that this user
+        # helped another learner join; each referred account can count once.
+        if need_help:
+            result = await self.db.execute(
+                select(func.count(User.id)).where(User.referred_by == user_id)
+            )
+            stats["help_others_count"] = result.scalar() or 0
 
         # Fetch daily challenge completions
         if need_challenges:
@@ -495,7 +600,8 @@ class AchievementCheckerService:
             "help_others": lambda: user_stats.get("help_others_count", 0) >= condition_value,
             "daily_challenge_complete": lambda: user_stats.get("daily_challenges_completed", 0) >= condition_value,
             "game_complete": lambda: user_stats.get("games_completed", 0) >= condition_value,
-            "comeback": lambda: False,  # Special: checked contextually at login
+            "comeback": lambda: user_stats.get("longest_learning_break_days", 0)
+            >= int(condition_data.get("break_days", DEFAULT_COMEBACK_BREAK_DAYS)),
         }
 
         evaluator = condition_evaluators.get(condition_type)

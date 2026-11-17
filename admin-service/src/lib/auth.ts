@@ -1,5 +1,3 @@
-import { ENV } from "./env";
-
 export type Role = "admin" | "super_admin";
 
 export type UserProfile = {
@@ -66,22 +64,7 @@ export const resolveRole = (user: UserProfile): Role | null => {
   if (effectiveRole === "super_admin" || user.is_super_admin) return "super_admin";
   if (effectiveRole === "admin" || user.is_admin) return "admin";
 
-  const email = user.email?.toLowerCase?.() ?? "";
-  const hasRoleConfig = ENV.adminEmails.length > 0 || ENV.superAdminEmails.length > 0;
-
-  if (!hasRoleConfig) {
-    // No client-side email config — role must come from backend (user.role / user.is_admin).
-    // Returning null prevents accidental admin access when env vars are missing.
-    return null;
-  }
-
-  if (ENV.superAdminEmails.map((e) => e.toLowerCase()).includes(email)) {
-    return "super_admin";
-  }
-
-  if (ENV.adminEmails.map((e) => e.toLowerCase()).includes(email)) {
-    return "admin";
-  }
-
+  // Client-side email lists are display configuration, never authorization.
+  // Admin access must come from the role/flags loaded from the backend.
   return null;
 };

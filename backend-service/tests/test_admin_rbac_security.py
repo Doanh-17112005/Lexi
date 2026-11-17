@@ -8,6 +8,7 @@ Usage:
 """
 
 import pytest
+from unittest.mock import AsyncMock
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -18,6 +19,22 @@ from app.models.rbac import Role
 from app.models.course import Course
 from app.models.gamification import Achievement, ShopItem
 from app.core.security import create_access_token, get_password_hash
+from app.core.token_blacklist import TokenBlacklist
+
+
+@pytest.fixture(autouse=True)
+def available_token_revocation_store(monkeypatch):
+    """RBAC tests isolate authorization logic from the required Redis service."""
+    monkeypatch.setattr(
+        TokenBlacklist,
+        "is_blacklisted",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        TokenBlacklist,
+        "is_user_access_token_revoked",
+        AsyncMock(return_value=False),
+    )
 
 
 # ============================================================================

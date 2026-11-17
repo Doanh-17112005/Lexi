@@ -1,3 +1,4 @@
+import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_tags.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/vocabulary_item_entity.dart';
 
 /// Vocabulary Item Model (Data Layer)
@@ -32,7 +33,7 @@ class VocabularyItemModel extends VocabularyItemEntity {
       difficultyLevel: json['difficulty_level'] as String,
       courseId: json['course_id'] as String?,
       lessonId: json['lesson_id'] as String?,
-      tags: (json['tags'] as List<dynamic>?)?.cast<String>(),
+      tags: normalizeVocabularyTags(json['tags']),
       usageFrequency: (json['usage_frequency'] as int?) ?? 0,
       createdAt: DateTime.parse(json['created_at'] as String),
     );

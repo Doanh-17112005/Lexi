@@ -56,6 +56,7 @@ void main() {
       expect(items, hasLength(1));
       expect(items.single.word, 'discover');
       expect(items.single.vietnameseTranslation, 'khám phá');
+      expect(items.single.tags, ['general']);
     });
   });
 

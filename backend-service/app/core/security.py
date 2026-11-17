@@ -56,24 +56,27 @@ async def get_password_hash_async(password: str) -> str:
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """
     Create JWT access token.
-    
+
     Args:
         data: Payload data (usually {"sub": user_id})
         expires_delta: Token expiration time
-        
+
     Returns:
         Encoded JWT token
     """
     to_encode = data.copy()
     
+    issued_at = datetime.now(timezone.utc)
+
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = issued_at + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = issued_at + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({
         "exp": expire,
-        "iat": datetime.now(timezone.utc),
+        "iat": issued_at,
+        "auth_time": issued_at.timestamp(),
         "jti": uuid.uuid4().hex,
         "type": "access",
         "iss": settings.JWT_ISSUER,
@@ -160,11 +163,14 @@ def create_verification_token(data: Dict[str, Any], expires_minutes: int = 60) -
         Encoded JWT token
     """
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+    issued_at = datetime.now(timezone.utc)
+    expire = issued_at + timedelta(minutes=expires_minutes)
     
     to_encode.update({
         "exp": expire,
-        "iat": datetime.now(timezone.utc),
+        "iat": issued_at,
+        "auth_time": issued_at.timestamp(),
+        "jti": uuid.uuid4().hex,
         "type": "verification"
     })
     
@@ -177,35 +183,41 @@ def create_verification_token(data: Dict[str, Any], expires_minutes: int = 60) -
     return encoded_jwt
 
 
-def decode_verification_token(token: str, purpose: str) -> Optional[str]:
-    """
-    Decode and verify a verification token.
-    
-    Args:
-        token: JWT token string
-        purpose: Expected purpose ("email_verify", "password_reset")
-        
-    Returns:
-        User ID if valid, None otherwise
-    """
+def decode_verification_token_payload(
+    token: str,
+    purpose: str,
+) -> Optional[Dict[str, Any]]:
+    """Decode a verification token and return its validated claims."""
     try:
         payload = jwt.decode(
             token,
             settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM]
+            algorithms=[settings.ALGORITHM],
         )
-        
-        # Verify token type
         if payload.get("type") != "verification":
             return None
-        
-        # Verify purpose
         if payload.get("purpose") != purpose:
             return None
-        
-        return payload.get("sub")
+        if not payload.get("sub"):
+            return None
+        return payload
     except JWTError:
         return None
+
+
+def decode_verification_token(token: str, purpose: str) -> Optional[str]:
+    """
+    Decode and verify a verification token.
+
+    Args:
+        token: JWT token string
+        purpose: Expected purpose ("email_verify", "password_reset")
+
+    Returns:
+        User ID if valid, None otherwise
+    """
+    payload = decode_verification_token_payload(token, purpose)
+    return payload.get("sub") if payload else None
 
 
 async def verify_google_token(id_token: str, audience: str | None = None) -> Optional[Dict[str, Any]]:

@@ -15,7 +15,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-1.2+-ff6b35?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![License](https://img.shields.io/badge/License-MIT-22c55e.svg?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android%20%7C%20Web-8b5cf6?style=for-the-badge)](https://github.com/InfinityZero3000/LexiLingo)
+[![Platform](https://img.shields.io/badge/platform-Web--first-8b5cf6?style=for-the-badge)](https://github.com/InfinityZero3000/LexiLingo)
 
 <br/>
 
@@ -33,13 +33,13 @@
 
 ## 1. Project Overview
 
-LexiLingo is a full-stack AI English tutoring platform built as a **monorepo with 5 deployable services**. It combines a Flutter mobile app, a FastAPI backend, a Python AI service, a React admin dashboard, and an MCP agent server.
+LexiLingo is a full-stack AI English tutoring platform built as a **monorepo with 5 deployable services**. Its current delivery target is a Flutter Web learner app, backed by FastAPI and Python AI services, with a React admin dashboard and an MCP agent server. Native platform folders remain in the repository but are not part of the active build/test scope.
 
 ### Target users
 
 | User type | Description |
 |-----------|-------------|
-| **Learner** | English learner (A1–C2) using the mobile app for lessons, vocabulary, AI chat, voice practice |
+| **Learner** | English learner (A1–C2) using the Web app for lessons, vocabulary, AI chat, and voice practice |
 | **Admin** | Content manager / super-admin using the dashboard to manage users, courses, and system config |
 | **Developer / Agent** | IDE tool users and AI agents accessing the MCP server for localization and graph tooling |
 
@@ -64,7 +64,7 @@ The system is organized into 8 architectural layers:
 
 | Layer | Role | Primary tech |
 |-------|------|-------------|
-| **Flutter Mobile App** | Cross-platform learner UI (iOS / Android / Web) | Dart 3.8, Flutter 3.24, Provider, GetIt |
+| **Flutter Web App** | Web-first learner UI | Dart 3.8, Flutter 3.24, Provider, GetIt |
 | **Backend API Service** | REST API, auth, data persistence, business logic | Python 3.11, FastAPI, SQLAlchemy 2 async, PostgreSQL, Redis |
 | **AI Service** | LLM orchestration, knowledge graph, voice pipeline | Python 3.11, FastAPI, LangGraph, KuzuDB, Faster-Whisper, Piper, HuBERT |
 | **Admin Dashboard** | Content management and monitoring SPA | TypeScript, React 18, Vite, Zustand, Recharts |
@@ -97,14 +97,14 @@ The system is organized into 8 architectural layers:
 | CEFR Assessment | Multi-skill proficiency test (grammar 40%, vocabulary 30%, fluency 30%) | AI Service + Backend |
 | Spaced Repetition | SM-2 algorithm with per-user ease factor and overdue priority queue | Backend |
 | Voice Pronunciation | Dual-stream WebSocket: simultaneous STT (Whisper) + TTS (Piper) + HuBERT phoneme scoring | AI Service |
-| Structured Curriculum | CEFR A1–C2 courses, units, lessons with XP rewards | Backend + Mobile |
-| Gamification | XP, level-up, leagues, weekly challenges, achievements, in-app shop | Backend + Mobile |
+| Structured Curriculum | CEFR A1–C2 courses, units, lessons with XP rewards | Backend + Learner Web |
+| Gamification | XP, level-up, leagues, weekly challenges, achievements, in-app shop | Backend + Learner Web |
 | Topic Chat | AI conversations on 68 topic catalogs — 60 TraceCAG-generated scenarios (A1–C1, 16 real-world categories) | AI Service |
-| Content Feed | Books, BBC Learning English articles, podcasts, YouTube clips | Backend + Mobile |
+| Content Feed | Books, BBC Learning English articles, podcasts, YouTube clips | Backend + Learner Web |
 | Admin CMS | Full CRUD for courses, vocabulary, users + analytics and AI model config | Admin Dashboard |
 | MCP IDE Tools | i18n key manager, local model handlers for developer workflow | MCP Server |
-| Multi-language UI | 7 locales: English, Vietnamese, Japanese, Korean, Chinese, French, Spanish | Mobile |
-| Offline Support | sqflite local cache for vocabulary and progress | Mobile |
+| Multi-language UI | 7 locales: English, Vietnamese, Japanese, Korean, Chinese, French, Spanish | Learner Web |
+| Resilient Web State | Backend-authoritative data with user-scoped browser storage for selected local-first flows | Learner Web |
 
 ---
 
@@ -112,7 +112,7 @@ The system is organized into 8 architectural layers:
 
 | Area | Technology |
 |------|-----------|
-| **Mobile** | Flutter 3.24+, Dart 3.8, Provider, GetIt, sqflite, Dio/http |
+| **Learner Web** | Flutter 3.24+, Dart 3.8, Provider, GetIt, Dio/http, browser storage adapters |
 | **Frontend (Admin)** | React 18, TypeScript 6, Vite, Zustand 5, Recharts, TanStack Query 5 |
 | **Backend** | Python 3.11, FastAPI 0.136+, SQLAlchemy 2 async, Alembic, Pydantic v2 |
 | **AI Orchestration** | LangGraph 1.2+, LangChain Core |
@@ -198,17 +198,15 @@ source venv/bin/activate
 uvicorn api.main:app --reload --port 8001
 ```
 
-#### Flutter Mobile App
+#### Flutter Web App
 
 ```bash
 cd flutter-app
 flutter pub get
 cp .env.example assets/env/.env # set API_BASE_URL
 
-flutter run # default device
-make run-web # Chrome
-make run-ios # iOS simulator
-make run-android # Android emulator/device
+flutter run -d chrome # active local target
+flutter build web --release
 ```
 
 #### Admin Dashboard
@@ -245,10 +243,9 @@ bash scripts/stop-all.sh
 docker-compose up -d
 docker-compose down
 
-# Flutter (via Makefile)
-make run-web       # Chrome
-make run-ios       # iOS simulator
-make build-apk     # Android release
+# Flutter Web (via Makefile / Flutter CLI)
+make run-web
+flutter build web --release
 
 # Backend
 alembic upgrade head   # run migrations

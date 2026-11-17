@@ -4,18 +4,22 @@ Verifies that completing missions correctly triggers badge unlocking,
 that slug mapping works, and that the full pipeline is consistent.
 """
 
-import pytest
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-from datetime import UTC, datetime, date, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
+
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.gamification import Achievement, UserAchievement, ChallengeRewardClaim
-from app.models.progress import LessonCompletion, Streak, UserCourseProgress, DailyActivity
-from app.models.vocabulary import UserVocabulary, VocabularyStatus
+from app.models.gamification import Achievement, ChallengeRewardClaim, UserAchievement
+from app.models.progress import DailyActivity, LessonCompletion, Streak, UserCourseProgress
 from app.models.user import User
-from app.services import AchievementCheckerService, TRIGGER_CONDITIONS
-
+from app.models.vocabulary import UserVocabulary, VocabularyStatus
+from app.services import TRIGGER_CONDITIONS, AchievementCheckerService
+from app.services.achievement_checker_service import (
+    _longest_learning_break_days,
+    _study_session_counts,
+)
 
 # ============================================================================
 # Unit Tests: TRIGGER_CONDITIONS Configuration
@@ -43,6 +47,9 @@ class TestTriggerConditionsConfig:
         assert "lesson_complete" in conditions
         assert "xp_earned" in conditions
         assert "course_complete" in conditions
+        assert "study_time_night" in conditions
+        assert "study_time_morning" in conditions
+        assert "comeback" in conditions
 
     def test_xp_earned_covers_level(self):
         """xp_earned trigger must also check numeric_level."""
@@ -211,6 +218,53 @@ class TestAchievementEvaluation:
         assert "user_following.following_id" not in statement
 
     @pytest.mark.asyncio
+    async def test_chat_sessions_count_real_topic_chat_summary_events(self):
+        db = AsyncMock(spec=AsyncSession)
+        db.execute.return_value = self._scalar_result(20)
+
+        stats = await AchievementCheckerService(db)._get_user_stats(
+            uuid4(), ["chat_complete"]
+        )
+
+        assert stats["chats_completed"] == 20
+        query = db.execute.await_args.args[0]
+        assert "product_events" in str(query)
+        assert {"session_summary_shown", "topic_chat"} <= set(
+            query.compile().params.values()
+        )
+
+    @pytest.mark.asyncio
+    async def test_help_others_counts_successful_referrals(self):
+        db = AsyncMock(spec=AsyncSession)
+        db.execute.return_value = self._scalar_result(10)
+
+        user_id = uuid4()
+        stats = await AchievementCheckerService(db)._get_user_stats(
+            user_id, ["help_others"]
+        )
+
+        assert stats["help_others_count"] == 10
+        query = db.execute.await_args.args[0]
+        assert "users.referred_by" in str(query)
+        assert user_id in query.compile().params.values()
+
+    def test_study_sessions_use_saved_timezone_windows(self):
+        completed = [
+            datetime(2026, 11, 5, 22, 30, tzinfo=UTC),  # 05:30 in Ho Chi Minh
+            datetime(2026, 11, 5, 15, 30, tzinfo=UTC),  # 22:30 in Ho Chi Minh
+            datetime(2026, 11, 5, 8, 0, tzinfo=UTC),
+        ]
+        assert _study_session_counts(completed, "Asia/Ho_Chi_Minh") == (1, 1)
+
+    def test_comeback_uses_real_gap_between_passed_lessons(self):
+        completed = [
+            datetime(2026, 10, 1, tzinfo=UTC),
+            datetime(2026, 10, 3, tzinfo=UTC),
+            datetime(2026, 10, 12, tzinfo=UTC),
+        ]
+        assert _longest_learning_break_days(completed) == 9
+
+    @pytest.mark.asyncio
     async def test_skill_badges_count_passed_lessons_from_real_labels(self):
         db = AsyncMock(spec=AsyncSession)
         result = MagicMock()
@@ -319,12 +373,13 @@ class TestAchievementEvaluation:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_comeback_always_false(self, checker):
-        """'comeback' condition returns False (needs special contextual check)."""
-        ach = self._make_achievement("comeback", 1, slug="comeback_king")
-        stats = {}
+    async def test_comeback_uses_configured_break_days(self, checker):
+        ach = self._make_achievement(
+            "comeback", 1, slug="comeback_king", condition_data={"break_days": 7}
+        )
+        stats = {"longest_learning_break_days": 8}
         result = await checker._evaluate_condition(uuid4(), ach, stats)
-        assert result is False
+        assert result is True
 
 
 # ============================================================================

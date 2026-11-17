@@ -1250,8 +1250,9 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  opacity: 0;
-  transform: translateY(40px) scale(0.97);
+  opacity: 1;
+  transform: none;
+  animation: card-enter 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* Orange → teal gradient accent line at top of card */
@@ -1274,6 +1275,12 @@ textarea:focus {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card {
+    animation: none;
   }
 }
 

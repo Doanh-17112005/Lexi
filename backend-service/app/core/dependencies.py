@@ -38,7 +38,13 @@ async def get_current_user(
             return current_user
     """
     token = credentials.credentials
-    if await TokenBlacklist.is_blacklisted(token):
+    blacklist_status = await TokenBlacklist.is_blacklisted(token)
+    if blacklist_status is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        )
+    if blacklist_status:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token"
@@ -48,6 +54,20 @@ async def get_current_user(
     payload = decode_token(token)
     if payload and payload.get("type") == "access" and (sub := payload.get("sub")):
         try:
+            cutoff_status = await TokenBlacklist.is_user_access_token_revoked(
+                str(sub),
+                payload.get("auth_time", payload.get("iat")),
+            )
+            if cutoff_status is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Authentication service temporarily unavailable",
+                )
+            if cutoff_status:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication token",
+                )
             # Convert string to UUID for query
             user_id = uuid.UUID(sub) if isinstance(sub, str) else sub
             result = await db.execute(
@@ -112,13 +132,30 @@ async def get_current_user_optional(
         return None
     
     token = credentials.credentials
-    if await TokenBlacklist.is_blacklisted(token):
+    blacklist_status = await TokenBlacklist.is_blacklisted(token)
+    if blacklist_status is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        )
+    if blacklist_status:
         return None
     
     # 1) Try local JWT
     payload = decode_token(token)
     if payload and payload.get("type") == "access" and (sub := payload.get("sub")):
         try:
+            cutoff_status = await TokenBlacklist.is_user_access_token_revoked(
+                str(sub),
+                payload.get("auth_time", payload.get("iat")),
+            )
+            if cutoff_status is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Authentication service temporarily unavailable",
+                )
+            if cutoff_status:
+                return None
             # Convert string to UUID for query
             user_id = uuid.UUID(sub) if isinstance(sub, str) else sub
             result = await db.execute(

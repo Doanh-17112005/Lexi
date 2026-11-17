@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.core.cefr_vocabulary_data import CEFR_VOCABULARY as CURATED_CEFR_VOCABULARY
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.course import Course, Lesson, Unit
@@ -192,6 +193,10 @@ CEFR_VOCABULARY = [
     {"word": "serendipity", "definition": "The accidental discovery of something valuable or interesting.", "phonetic": "/ˌser.ənˈdɪp.ə.ti/", "meaning": "Sự tình cờ may mắn", "level": "C2", "part_of_speech": "noun", "example": "Meeting my business partner was pure serendipity."}
 ]
 
+# The compact list above is kept only as historical context for this original
+# one-file seed. The database-independent curated catalog is authoritative.
+CEFR_VOCABULARY = CURATED_CEFR_VOCABULARY
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Seed CEFR demo content in a non-production database."
@@ -252,6 +257,9 @@ async def seed_and_test(*, user_email=None, publish=False):
                     "pronunciation": vocab["phonetic"],
                     "definition": vocab["definition"],
                     "example": vocab["example"],
+                    "provenance_type": vocab["provenance_type"],
+                    "source_reference": vocab["source_reference"],
+                    "qa_status": vocab["qa_status"],
                 }
                 for vocab in CEFR_VOCABULARY
                 if vocab["level"] == lvl
@@ -356,7 +364,7 @@ async def seed_and_test(*, user_email=None, publish=False):
                 })
 
         # ── 3. NẠP TỪ VỰNG TỪ A1 -> C2 ──
-        print("\n[+] Đang cập nhật kho từ vựng chuẩn CEFR A1 -> C2...")
+        print("\n[+] Đang cập nhật kho từ vựng CEFR chưa kiểm duyệt (NEEDS_REVIEW)...")
         vocab_added = 0
         for v in CEFR_VOCABULARY:
             v_res = await db.execute(select(VocabularyItem).where(VocabularyItem.word == v["word"]))
@@ -369,20 +377,36 @@ async def seed_and_test(*, user_email=None, publish=False):
                     translation={"vi": v["meaning"], "examples": [v["example"]]},
                     pronunciation=v["phonetic"],
                     difficulty_level=getattr(DifficultyLevel, v["level"]),
-                    part_of_speech=getattr(PartOfSpeech, v["part_of_speech"].upper())
+                    part_of_speech=getattr(PartOfSpeech, v["part_of_speech"].upper()),
+                    tags={
+                        "source": v["provenance_type"],
+                        "source_reference": v["source_reference"],
+                        "qa_status": v["qa_status"],
+                    },
                 )
                 db.add(v_item)
                 vocab_added += 1
-            elif not existing_item.definition or existing_item.definition == v["meaning"]:
-                # Idempotent repair for the original seed, which accidentally
-                # copied the Vietnamese translation into the English field.
-                existing_item.definition = v["definition"]
-                existing_item.translation = {
-                    "vi": v["meaning"],
-                    "examples": [v["example"]],
-                }
+            else:
+                if not existing_item.definition or existing_item.definition == v["meaning"]:
+                    # Idempotent repair for the original seed, which accidentally
+                    # copied the Vietnamese translation into the English field.
+                    existing_item.definition = v["definition"]
+                    existing_item.translation = {
+                        "vi": v["meaning"],
+                        "examples": [v["example"]],
+                    }
+                existing_tags = (
+                    dict(existing_item.tags) if isinstance(existing_item.tags, dict) else {}
+                )
+                existing_tags.setdefault("source", v["provenance_type"])
+                existing_tags.setdefault("source_reference", v["source_reference"])
+                existing_tags.setdefault("qa_status", v["qa_status"])
+                existing_item.tags = existing_tags
         await db.commit()
-        print(f"    -> Đã nạp thành công {vocab_added} từ vựng mới chuẩn A1 -> C2 vào Database.")
+        print(
+            f"    -> Đã nạp {vocab_added} từ vựng mới A1 -> C2; "
+            "tất cả nội dung chưa có nguồn vẫn ở NEEDS_REVIEW."
+        )
 
         # ── 4. XUẤT KẾT QUẢ KIỂM THỬ TỔNG HỢP ──
         print("\n" + "=" * 65)

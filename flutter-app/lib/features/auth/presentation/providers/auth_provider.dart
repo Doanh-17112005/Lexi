@@ -35,6 +35,7 @@ class AuthProvider extends ChangeNotifier {
   final AuthRepository authRepository;
   final GoogleSignInService googleSignInService;
   final FacebookSignInService facebookSignInService;
+  final Duration redirectRecoveryTimeout;
 
   UserEntity? _user;
   bool _isLoading = false;
@@ -54,6 +55,7 @@ class AuthProvider extends ChangeNotifier {
     required this.authRepository,
     required this.googleSignInService,
     required this.facebookSignInService,
+    this.redirectRecoveryTimeout = const Duration(seconds: 2),
   }) {
     _checkCurrentUser();
     _sessionExpiredSub = SessionExpiredService.instance.onSessionExpired.listen(
@@ -112,7 +114,8 @@ class AuthProvider extends ChangeNotifier {
       // Web redirect flow: if we just came back from Google, finish backend
       // sign-in before checking stored session.
       final pendingGoogleIdToken = await googleSignInService
-          .consumePendingWebRedirectIdToken();
+          .consumePendingWebRedirectIdToken()
+          .timeout(redirectRecoveryTimeout, onTimeout: () => null);
       if (pendingGoogleIdToken != null) {
         await _authenticateWithGoogleIdToken(pendingGoogleIdToken);
         return;
@@ -184,8 +187,11 @@ class AuthProvider extends ChangeNotifier {
 
       if (idToken == null) {
         final signInError = googleSignInService.lastError?.toLowerCase();
-        if (signInError == null || signInError.contains('cancelled')) {
-          _errorMessage = 'Google sign in was cancelled';
+        if (signInError == null ||
+            signInError.contains('cancelled') ||
+            signInError.contains('canceled') ||
+            signInError.contains('popup-closed-by-user')) {
+          _errorMessage = 'Đăng nhập bằng Google đã bị hủy.';
         } else {
           _errorMessage = _parseErrorMessage(googleSignInService.lastError!);
         }
@@ -247,7 +253,7 @@ class AuthProvider extends ChangeNotifier {
       // Get Firebase ID token via Facebook authentication
       final idToken = await facebookSignInService.signIn();
       if (idToken == null) {
-        _errorMessage = 'Facebook sign in was cancelled or failed';
+        _errorMessage = 'Đăng nhập bằng Facebook đã bị hủy.';
         _isLoading = false;
         notifyListeners();
         return;
@@ -374,6 +380,33 @@ class AuthProvider extends ChangeNotifier {
         },
       );
       return success;
+    } catch (e) {
+      _errorMessage = _parseErrorMessage(e.toString());
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Verify an email address using the token from the verification link.
+  Future<bool> verifyEmail(String token) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      final result = await authRepository.verifyEmail(token);
+      return result.fold<bool>(
+        (failure) {
+          _errorMessage = _getFailureMessage(failure);
+          return false;
+        },
+        (_) {
+          _errorMessage = null;
+          return true;
+        },
+      );
     } catch (e) {
       _errorMessage = _parseErrorMessage(e.toString());
       return false;
@@ -612,8 +645,10 @@ class AuthProvider extends ChangeNotifier {
       return 'This sign-in provider is disabled. Enable it in Firebase Authentication > Sign-in method.';
     }
     if (normalized.contains('configuration-not-found') ||
-        normalized.contains('invalid-api-key')) {
-      return 'Firebase Web configuration is invalid or incomplete.';
+        normalized.contains('invalid-api-key') ||
+        normalized.contains('no firebase app') ||
+        normalized.contains('firebase service is unavailable')) {
+      return 'Dịch vụ xác thực Firebase chưa sẵn sàng. Vui lòng thử đăng nhập bằng email hoặc kiểm tra cấu hình.';
     }
     if (normalized.contains('popup-blocked')) {
       return 'The sign-in popup was blocked. Allow popups for this site and try again.';
@@ -632,21 +667,27 @@ class AuthProvider extends ChangeNotifier {
         normalized.contains('blocked by cors')) {
       return 'Login is blocked by CORS configuration. Please try again in a moment.';
     }
-    if (normalized.contains('network')) {
-      return 'Network error. Please check your internet connection.';
+    if (normalized.contains('network') ||
+        normalized.contains('failed to fetch') ||
+        normalized.contains('connection refused') ||
+        normalized.contains('socketexception')) {
+      return 'auth.errNetwork'.tr();
     } else if (normalized.contains('cancelled') ||
-        normalized.contains('canceled')) {
-      return 'Sign in was cancelled.';
+        normalized.contains('canceled') ||
+        normalized.contains('popup-closed-by-user')) {
+      return 'Đăng nhập đã bị hủy.';
+    } else if (normalized.contains('incorrect email or password') ||
+        normalized.contains('invalid email or password') ||
+        normalized.contains('invalid credentials') ||
+        normalized.contains('wrong-password') ||
+        normalized.contains('user-not-found')) {
+      return 'auth.errInvalidCredentials'.tr();
     } else if (normalized.contains('email')) {
-      return 'Invalid email address.';
+      return 'auth.invalidEmail'.tr();
     } else if (normalized.contains('password')) {
-      return 'Invalid password.';
-    } else if (normalized.contains('user-not-found')) {
-      return 'No account found with this email.';
-    } else if (normalized.contains('wrong-password')) {
-      return 'Incorrect password.';
+      return 'auth.errInvalidCredentials'.tr();
     } else if (normalized.contains('too-many-requests')) {
-      return 'Too many attempts. Please try again later.';
+      return 'auth.errRateLimited'.tr();
     } else {
       return 'An error occurred. Please try again.';
     }
@@ -659,9 +700,24 @@ class AuthProvider extends ChangeNotifier {
       if (normalized.contains('invalid google id token')) {
         return 'Google Sign-In token is invalid. Please update Android SHA and Google OAuth config.';
       }
+      if (normalized.contains('incorrect email or password') ||
+          normalized.contains('invalid email or password') ||
+          normalized.contains('invalid credentials') ||
+          normalized.contains('sai email hoặc mật khẩu') ||
+          normalized.contains('mật khẩu không đúng') ||
+          normalized.contains('email hoặc mật khẩu không đúng')) {
+        return 'auth.errInvalidCredentials'.tr();
+      }
       return failure.message;
     } else if (failure is ServerFailure) {
       final normalized = failure.message.toLowerCase();
+      if (normalized.contains('network') ||
+          normalized.contains('failed to fetch') ||
+          normalized.contains('connection refused') ||
+          normalized.contains('socketexception') ||
+          normalized.contains('clientexception')) {
+        return 'auth.errNetwork'.tr();
+      }
       if (normalized.contains('timeoutexception') ||
           normalized.contains('timed out')) {
         return 'Server timeout. Please check server status and try again.';
@@ -671,15 +727,15 @@ class AuthProvider extends ChangeNotifier {
       }
       return failure.message;
     } else if (failure is NetworkFailure) {
-      return 'Network error. Please check your internet connection.';
+      return 'auth.errNetwork'.tr();
     } else if (failure is CacheFailure) {
       return 'Local storage error.';
     } else if (failure is ValidationFailure) {
       return failure.message;
     } else if (failure is ConflictFailure) {
-      return failure.message;
+      return 'auth.errAlreadyExists'.tr();
     } else if (failure is RateLimitFailure) {
-      return 'Too many attempts. Please try again later.';
+      return 'auth.errRateLimited'.tr();
     } else if (failure is PermissionFailure) {
       return failure.message;
     } else if (failure is NotFoundFailure) {

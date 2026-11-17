@@ -7,6 +7,21 @@ from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
+def validate_password_strength(value: str) -> str:
+    """Apply one password policy to registration and password updates."""
+    if len(value) < 8 or len(value) > 100:
+        raise ValueError('Password must be between 8 and 100 characters')
+    if not re.search(r'[A-Z]', value):
+        raise ValueError('Password must contain at least 1 uppercase letter')
+    if not re.search(r'[a-z]', value):
+        raise ValueError('Password must contain at least 1 lowercase letter')
+    if not re.search(r'[0-9]', value):
+        raise ValueError('Password must contain at least 1 number')
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\/~`]', value):
+        raise ValueError('Password must contain at least 1 special character')
+    return value
+
+
 class RegisterRequest(BaseModel):
     """Registration request."""
     email: EmailStr
@@ -26,15 +41,7 @@ class RegisterRequest(BaseModel):
     @field_validator('password')
     @classmethod
     def validate_password_strength(cls, v: str) -> str:
-        if not re.search(r'[A-Z]', v):
-            raise ValueError('Password must contain at least 1 uppercase letter')
-        if not re.search(r'[a-z]', v):
-            raise ValueError('Password must contain at least 1 lowercase letter')
-        if not re.search(r'[0-9]', v):
-            raise ValueError('Password must contain at least 1 number')
-        if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\/~`]', v):
-            raise ValueError('Password must contain at least 1 special character')
-        return v
+        return validate_password_strength(v)
 
 
 class LoginRequest(BaseModel):
@@ -73,6 +80,11 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=8, max_length=100)
 
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password_strength(cls, v: str) -> str:
+        return validate_password_strength(v)
+
 
 # ===== New schemas for missing endpoints =====
 
@@ -96,6 +108,11 @@ class ResetPasswordRequest(BaseModel):
     """Reset password with token."""
     token: str = Field(..., description="Password reset token from email")
     new_password: str = Field(..., min_length=8, max_length=100)
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password_strength(cls, v: str) -> str:
+        return validate_password_strength(v)
 
 
 class VerifyEmailRequest(BaseModel):

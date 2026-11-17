@@ -200,8 +200,12 @@ async def get_vocabulary_items(
                                     limit=limit, offset=offset)
         cached = await get_cached(cache_key)
         if cached is not None:
+            serialized = [
+                VocabularyItemResponse.model_validate(item).model_dump(mode="json")
+                for item in cached
+            ]
             return JSONResponse(
-                content=cached,
+                content=serialized,
                 headers={"Cache-Control": "public, max-age=120"},
             )
         

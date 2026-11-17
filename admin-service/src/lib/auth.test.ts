@@ -20,7 +20,11 @@ describe("resolveRole", () => {
     expect(resolveRole(user({ is_admin: true }))).toBe("admin");
   });
 
-  it("does not grant access without a backend role or configured allowlist", () => {
+  it("does not grant access without a backend role", () => {
     expect(resolveRole(user())).toBeNull();
+  });
+
+  it("does not infer admin access from an email address", () => {
+    expect(resolveRole(user({ email: "admin@example.com" }))).toBeNull();
   });
 });

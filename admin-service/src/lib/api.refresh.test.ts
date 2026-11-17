@@ -113,6 +113,24 @@ describe("apiFetch token refresh", () => {
     expect(retryHeaders.get("Authorization")).toBe("Bearer fresh-token");
   });
 
+  it("accepts the backend response envelope when refreshing", async () => {
+    authStore.accessToken = token(-10);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          data: { access_token: "enveloped-token", refresh_token: "rotated-token" },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiFetch(`${ENV.backendUrl}/admin/courses`);
+
+    expect(authStore.accessToken).toBe("enveloped-token");
+    expect(authStore.refreshToken).toBe("rotated-token");
+  });
+
   it("refreshes once when several calls race on an expired token", async () => {
     authStore.accessToken = token(-10);
     let refreshCalls = 0;
@@ -163,6 +181,24 @@ describe("apiFetch token refresh", () => {
 
     const headers = fetchMock.mock.calls[0][1].headers as Headers;
     expect(headers.has("Authorization")).toBe(false);
+  });
+
+  it("does not reload the login page when a skipAuth login request returns 401", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(401, { detail: "Incorrect email or password" }))
+    );
+
+    await expect(
+      apiFetch(`${ENV.backendUrl}/auth/login`, {
+        skipAuth: true,
+        method: "POST",
+        body: JSON.stringify({ email: "admin@example.com", password: "wrong" }),
+      })
+    ).rejects.toThrow("Incorrect email or password");
+
+    expect(authStore.clear).not.toHaveBeenCalled();
+    expect(location.href).toBe("");
   });
 
   it("surfaces a FastAPI validation list as one readable message", async () => {

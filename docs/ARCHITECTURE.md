@@ -1,7 +1,11 @@
 # LexiLingo — Architecture Overview
 
-> **Version**: 2.0 | **Updated**: 2026-06-01
+> **Version**: 2.1 | **Updated**: 2026-11-06
 > Generated from knowledge graph: 1,844 nodes · 2,174 edges · 1,133 source files
+
+> Current delivery scope is Web-first. Native Flutter targets remain in source
+> but are not part of current build/test claims. PostgreSQL through the Backend
+> API is authoritative; browser storage is feature-scoped and user-scoped.
 
 ---
 
@@ -22,7 +26,7 @@ LexiLingo là ứng dụng học tiếng Anh AI-first với kiến trúc **monor
 ```mermaid
 graph TB
  subgraph CLIENT[" Client Layer"]
- MOBILE["Flutter Mobile App<br/>(iOS · Android · Web)<br/>Dart 3 · Provider · Clean Arch"]
+ MOBILE["Flutter Web Learner App<br/>(Web-first)<br/>Dart 3 · Provider · Clean Arch"]
  ADMINUI["React Admin Dashboard<br/>(SPA)<br/>TypeScript · Vite · Zustand"]
  IDE["IDE / Claude Code<br/>(MCP Client)"]
  end
@@ -119,14 +123,14 @@ graph TB
 
 ## 3. Module chi tiết
 
-### 3.1 Flutter Mobile App
+### 3.1 Flutter Web Learner App
 
 | Thuộc tính | Chi tiết |
 |---|---|
-| **Platform** | iOS · Android · Web (Flutter 3.24+) |
+| **Platform** | Web-first (Flutter 3.24+); native folders are out of current QA scope |
 | **State Management** | Provider + GetIt (DI) |
 | **Architecture** | Clean Architecture — features/[domain]/{data,domain,presentation} |
-| **Offline** | sqflite local cache |
+| **Client persistence** | Browser adapters/SharedPreferences for selected local-first flows; Backend remains authoritative |
 | **i18n** | 7 ngôn ngữ (en, vi, zh, ja, ko, es, fr) |
 
 **Feature modules (21 modules):**
@@ -160,7 +164,7 @@ flutter-app/lib/features/
 ```
 UI Widget → Provider (ChangeNotifier) → UseCase → Repository
 → RemoteDataSource (HTTP/WS) → Kong Gateway → Backend/AI
-→ LocalDataSource (sqflite) ← cache
+→ Web local adapters ← user-scoped cache (supported features only)
 ```
 
 ---
@@ -375,7 +379,7 @@ MCP Tools:
 ### 4.1 Học từ vựng (Spaced Repetition)
 
 ```
-[Mobile] User reviews word
+[Learner Web] User reviews word
  │
  ▼
 [Kong] → [Backend /api/v1/vocabulary/review]
@@ -387,13 +391,13 @@ MCP Tools:
 [PostgreSQL] Persist review result
  │
  ▼
-[Backend] Return next word in queue → [Mobile] Show next card
+[Backend] Return next word in queue → [Learner Web] Show next card
 ```
 
 ### 4.2 AI Chat với TRACECAG
 
 ```
-[Mobile] User sends message
+[Learner Web] User sends message
  │
  ▼
 [Kong] → [AI Service /api/v1/lexi/chat (WebSocket SSE)]
@@ -403,7 +407,7 @@ MCP Tools:
  ├── Diagnose: classify error type, map to CEFR concept
  ├── Retrieve: KuzuDB BFS + Redis L0 cache + vector search
  ├── Ground: inject KG context + learner mastery into prompt
- └── Generate: Qwen2.5 streaming → SSE → WebSocket → Mobile
+ └── Generate: Qwen2.5 streaming → SSE → WebSocket → Learner Web
  │
  ▼
 [AI Service] Log session to MongoDB
@@ -413,7 +417,7 @@ MCP Tools:
 ### 4.3 Speaking Practice
 
 ```
-[Mobile] User speaks → audio chunks via WebSocket
+[Learner Web] User speaks → audio chunks via WebSocket
  │
  ▼
 [AI Service /ws/stream — dual_stream_orchestrator]
@@ -423,7 +427,7 @@ MCP Tools:
  └── Piper TTS: response text → audio (streamed back)
  │
  ▼
-[Mobile] Shows transcript + phoneme heatmap + IPA correction
+[Learner Web] Shows transcript + phoneme heatmap + IPA correction
 ```
 
 ---
@@ -460,7 +464,7 @@ CI/CD (.github/workflows/):
 
 ## 6. Dependency matrix
 
-| | Mobile | Backend | AI Service | Admin | MCP |
+| | Learner Web | Backend | AI Service | Admin | MCP |
 |---|:---:|:---:|:---:|:---:|:---:|
 | **Kong Gateway** | ← | ← | ← | ← | — |
 | **PostgreSQL** | — | Y | — | — | — |

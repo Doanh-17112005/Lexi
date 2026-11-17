@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 
@@ -15,6 +16,9 @@ class FacebookSignInService {
       logInfo(_tag, 'Starting Facebook Sign In...');
 
       if (kIsWeb) {
+        if (Firebase.apps.isEmpty) {
+          throw Exception('Firebase service is unavailable. Please check configuration.');
+        }
         return await _signInWeb();
       } else {
         return await _signInMobile();

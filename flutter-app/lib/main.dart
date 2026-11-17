@@ -34,6 +34,7 @@ import 'package:lexilingo_app/features/achievements/presentation/screens/achieve
 import 'package:lexilingo_app/features/achievements/presentation/providers/achievement_provider.dart';
 import 'package:lexilingo_app/features/auth/presentation/providers/auth_provider.dart';
 import 'package:lexilingo_app/features/auth/presentation/pages/reset_password_page.dart';
+import 'package:lexilingo_app/features/auth/presentation/pages/verify_email_page.dart';
 import 'package:lexilingo_app/features/auth/presentation/widgets/auth_wrapper.dart';
 import 'package:lexilingo_app/features/chat/presentation/providers/chat_provider.dart';
 import 'package:lexilingo_app/features/chat/presentation/providers/story_provider.dart';
@@ -110,7 +111,11 @@ void main() async {
   try {
     // Load only public client config. Raw .env files may contain server
     // secrets and must never be bundled into Flutter web assets.
-    final envFile = kReleaseMode
+    final isLocalWeb = kIsWeb &&
+        (Uri.base.host == 'localhost' ||
+            Uri.base.host == '127.0.0.1' ||
+            Uri.base.host.isEmpty);
+    final envFile = (kReleaseMode && !isLocalWeb)
         ? 'assets/env/prod_config'
         : 'assets/env/dev_config';
     await dotenv.load(fileName: envFile);
@@ -125,7 +130,7 @@ void main() async {
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
-    );
+    ).timeout(const Duration(seconds: 4));
     debugPrint('Firebase initialized successfully');
 
     // Crashlytics: route Flutter framework errors to Crashlytics in release
@@ -313,6 +318,41 @@ class _LexiLingoAppState extends State<LexiLingoApp>
     return null;
   }
 
+  String? _extractVerificationTokenFromWebLink() {
+    final queryToken = Uri.base.queryParameters['token'];
+    if (queryToken != null && queryToken.isNotEmpty) return queryToken;
+
+    final fragmentUri = Uri.tryParse(Uri.base.fragment);
+    final fragmentToken = fragmentUri?.queryParameters['token'];
+    return fragmentToken != null && fragmentToken.isNotEmpty
+        ? fragmentToken
+        : null;
+  }
+
+  Route<dynamic>? _buildAuthLinkRoute(RouteSettings settings) {
+    final uri = Uri.tryParse(settings.name ?? '');
+    if (uri == null) return null;
+
+    if (uri.path == '/reset-password') {
+      final token =
+          uri.queryParameters['token'] ?? _extractResetTokenFromDeepLink();
+      return MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => ResetPasswordPage(initialToken: token),
+      );
+    }
+    if (uri.path == '/verify-email') {
+      final token =
+          uri.queryParameters['token'] ??
+          _extractVerificationTokenFromWebLink();
+      return MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => VerifyEmailPage(token: token),
+      );
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
@@ -343,9 +383,7 @@ class _LexiLingoAppState extends State<LexiLingoApp>
           create: (_) => di.sl<DailyChallengesProvider>()..loadChallenges(),
         ),
         // No eager load: the Content tab calls load() when first opened.
-        ChangeNotifierProvider(
-          create: (_) => di.sl<ContentActivityProvider>(),
-        ),
+        ChangeNotifierProvider(create: (_) => di.sl<ContentActivityProvider>()),
         ChangeNotifierProvider(create: (_) => di.sl<AchievementProvider>()),
         ChangeNotifierProvider(create: (_) => di.sl<NotificationProvider>()),
         ChangeNotifierProvider(create: (_) => di.sl<LevelProvider>()),
@@ -403,6 +441,7 @@ class _LexiLingoAppState extends State<LexiLingoApp>
             supportedLocales: context.supportedLocales,
             localizationsDelegates: context.localizationDelegates,
             home: const AuthWrapper(),
+            onGenerateRoute: _buildAuthLinkRoute,
             routes: {
               '/youtube': LearnerRoute.builder(
                 (context) => const YouTubeExploreScreen(),
@@ -509,6 +548,9 @@ class _LexiLingoAppState extends State<LexiLingoApp>
                 token ??= _extractResetTokenFromDeepLink();
                 return ResetPasswordPage(initialToken: token);
               },
+              '/verify-email': (context) => VerifyEmailPage(
+                token: _extractVerificationTokenFromWebLink(),
+              ),
             },
           );
         },

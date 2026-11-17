@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import gsap from "gsap";
 import { createGlobeScene } from "./globe-scene";
 import { createGlobeShell } from "./globe-shell";
 import { createGlobeDots } from "./globe-dots";
@@ -49,23 +48,6 @@ export default function GlobeBackground() {
       scene.onResize();
     };
     window.addEventListener("resize", onResize);
-
-    // ── GSAP card entrance ────────────────────────────────────────────
-    const loginCard = document.querySelector<HTMLElement>(".login-card");
-    if (loginCard) {
-      gsap.fromTo(
-        loginCard,
-        { opacity: 0, y: 40, scale: 0.97 },
-        {
-          opacity: 1,
-          y: 0,
-          scale: 1,
-          duration: 1.0,
-          delay: 0.3,
-          ease: "power3.out",
-        }
-      );
-    }
 
     // ── Animation loop ────────────────────────────────────────────────
     let rafId: number;

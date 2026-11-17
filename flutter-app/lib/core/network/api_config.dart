@@ -48,6 +48,9 @@ class ApiConfig {
         return envUrl;
       }
     }
+    if (kIsWeb && _isLoopbackHost(Uri.base.host.toLowerCase())) {
+      return AppConstants.localApiBaseUrl;
+    }
     return _shouldUseLocalFallback
         ? AppConstants.localApiBaseUrl
         : AppConstants.apiBaseUrl;
@@ -89,6 +92,9 @@ class ApiConfig {
         return envUrl;
       }
     }
+    if (kIsWeb && _isLoopbackHost(Uri.base.host.toLowerCase())) {
+      return AppConstants.localAiServiceUrl;
+    }
     return _shouldUseLocalFallback
         ? AppConstants.localAiServiceUrl
         : AppConstants.aiServiceUrl;
@@ -126,6 +132,13 @@ class ApiConfig {
   static bool get _shouldUseLocalFallback => false;
 
   static bool get _mustUseProductionBackend {
+    if (kIsWeb) {
+      final host = Uri.base.host.toLowerCase();
+      if (host.isNotEmpty && _isLoopbackHost(host)) {
+        return false;
+      }
+      return !kDebugMode;
+    }
     if (kReleaseMode) return true;
     if (_readEnv('DEBUG_MODE') == 'false') return true;
     final host = Uri.base.host.toLowerCase();

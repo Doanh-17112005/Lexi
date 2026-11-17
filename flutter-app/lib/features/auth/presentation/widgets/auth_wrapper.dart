@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
@@ -63,7 +64,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
     final prefs = await SharedPreferences.getInstance();
     final shouldShowWelcome =
-        prefs.getBool(AppConstants.firstTimeUserKey) ?? true;
+        prefs.getBool(AppConstants.firstTimeUserKey) ?? (kIsWeb ? false : true);
 
     if (!mounted) return;
     setState(() {
