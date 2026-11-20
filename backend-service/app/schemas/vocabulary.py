@@ -182,6 +182,12 @@ class ReviewSubmission(BaseModel):
     """Schema for submitting a vocabulary review"""
     quality: int = Field(..., ge=0, le=5, description="Quality rating (0-5)")
     time_spent_ms: int = Field(default=0, ge=0, description="Time spent in milliseconds")
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Optional client idempotency key to prevent duplicate XP/review on retry",
+    )
     
     @field_validator("quality")
     @classmethod

@@ -7,12 +7,14 @@ import 'package:lexilingo_app/core/widgets/language_switcher_button.dart';
 class WelcomePage extends StatefulWidget {
   final VoidCallback onGetStarted;
   final VoidCallback onSkip;
+  final VoidCallback? onTryAsGuest;
   final String? userName;
 
   const WelcomePage({
     super.key,
     required this.onGetStarted,
     required this.onSkip,
+    this.onTryAsGuest,
     this.userName,
   });
 
@@ -173,6 +175,17 @@ class _WelcomePageState extends State<WelcomePage>
                               ),
                             ),
                           ),
+                          if (widget.onTryAsGuest != null) ...[
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: widget.onTryAsGuest,
+                              icon: const Icon(Icons.explore_outlined),
+                              label: const Text(
+                                'Học thử không cần đăng nhập',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 28),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,

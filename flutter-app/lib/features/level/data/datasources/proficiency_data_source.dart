@@ -84,4 +84,50 @@ class ProficiencyDataSource {
       body: {'answers': buildPlacementAnswerPayload(answers)},
     );
   }
+
+  /// Start a persisted 6-skill placement test attempt.
+  Future<Map<String, dynamic>> startSixSkillPlacementTest() async {
+    return await _apiClient.post('/proficiency/placement-test/start');
+  }
+
+  /// Save partial answer draft for an in-progress 6-skill placement attempt.
+  Future<Map<String, dynamic>> saveSixSkillAnswer({
+    required String attemptId,
+    required String taskId,
+    int? selectedOption,
+    String? textResponse,
+  }) async {
+    return await _apiClient.patch(
+      '/proficiency/placement-test/$attemptId/answer',
+      body: {
+        'task_id': taskId,
+        if (selectedOption != null) 'selected_option': selectedOption,
+        if (textResponse != null) 'text_response': textResponse,
+      },
+    );
+  }
+
+  /// Resume or retrieve a 6-skill placement attempt.
+  Future<Map<String, dynamic>> getSixSkillAttempt(String attemptId) async {
+    return await _apiClient.get('/proficiency/placement-test/$attemptId');
+  }
+
+  /// Submit and score a 6-skill placement attempt with idempotency protection.
+  Future<Map<String, dynamic>> submitSixSkillPlacementTest({
+    required String attemptId,
+    required List<Map<String, dynamic>> answers,
+    required int timeTakenSeconds,
+    String? idempotencyKey,
+  }) async {
+    final res = await _apiClient.post(
+      '/proficiency/placement-test/$attemptId/submit',
+      body: {
+        'answers': answers,
+        'time_taken_seconds': timeTakenSeconds,
+        if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
+      },
+    );
+    await _cache.invalidate(_profileCacheKey);
+    return res;
+  }
 }

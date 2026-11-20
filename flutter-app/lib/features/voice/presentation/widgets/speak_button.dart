@@ -79,9 +79,14 @@ class _SpeakButtonState extends State<SpeakButton> {
       if (result != null && result.audioData.isNotEmpty) {
         File? file;
         if (kIsWeb) {
+          final isWav = result.audioData.length >= 4 &&
+              result.audioData[0] == 0x52 &&
+              result.audioData[1] == 0x49 &&
+              result.audioData[2] == 0x46 &&
+              result.audioData[3] == 0x46;
           final audioUri = Uri.dataFromBytes(
             result.audioData,
-            mimeType: 'audio/wav',
+            mimeType: isWav ? 'audio/wav' : 'audio/mpeg',
           ).toString();
           await _player.setUrl(audioUri);
         } else {
@@ -286,9 +291,14 @@ class _SpeakIconButtonState extends State<SpeakIconButton> {
       if (result != null && result.audioData.isNotEmpty) {
         File? file;
         if (kIsWeb) {
+          final isWav = result.audioData.length >= 4 &&
+              result.audioData[0] == 0x52 &&
+              result.audioData[1] == 0x49 &&
+              result.audioData[2] == 0x46 &&
+              result.audioData[3] == 0x46;
           final audioUri = Uri.dataFromBytes(
             result.audioData,
-            mimeType: 'audio/wav',
+            mimeType: isWav ? 'audio/wav' : 'audio/mpeg',
           ).toString();
           await _player.setUrl(audioUri);
         } else {

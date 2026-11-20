@@ -18,6 +18,7 @@ from app.core.cache import build_cache_key, get_cached, set_cached
 from app.models.user import User
 from app.models.progress import UserCourseProgress
 from app.crud.course import CourseCRUD, UnitCRUD, LessonCRUD
+from app.services.content_publication_policy import is_lesson_learner_visible
 from app.schemas.course import (
     CourseResponse,
     CourseListItem,
@@ -92,20 +93,25 @@ async def get_courses(
         ]
         await set_cached(cache_key, {"items": course_dicts, "total": total}, ttl=60)
     
-    # Overlay enrollment status (per-user, not cached)
-    enrolled_ids = set()
+    # Overlay enrollment & progress status (per-user, not cached)
+    enrolled_progress: dict[uuid.UUID, float] = {}
     if current_user:
         course_ids = [uuid.UUID(c["id"]) for c in course_dicts]
-        enrolled_ids = await CourseCRUD.get_enrolled_course_ids(
+        enrolled_progress = await CourseCRUD.get_enrolled_course_progress(
             db, current_user.id, course_ids
         )
-    
+
     course_items = []
     for c in course_dicts:
         c_id = uuid.UUID(c["id"])
+        is_enrolled = (c_id in enrolled_progress) if current_user else None
         item = CourseListItem(
-            **{**c, "id": c_id,
-               "is_enrolled": c_id in enrolled_ids if current_user else None}
+            **{
+                **c,
+                "id": c_id,
+                "is_enrolled": is_enrolled,
+                "user_progress": enrolled_progress.get(c_id) if current_user else None,
+            }
         )
         course_items.append(item)
     
@@ -185,7 +191,8 @@ async def get_enrolled_courses(
             "total_lessons": course.total_lessons,
             "total_xp": course.total_xp,
             "estimated_duration": course.estimated_duration,
-            "is_enrolled": True
+            "is_enrolled": True,
+            "user_progress": float(progress.progress_percentage or 0.0),
         }
         
         item = CourseListItem(**item_dict)
@@ -234,11 +241,19 @@ async def get_course(
     # Build response
     course_response = CourseResponse.model_validate(course)
     
-    # Add enrollment info if user is authenticated
+    # Add enrollment & progress info if user is authenticated
     if current_user:
-        course_response.is_enrolled = await CourseCRUD.is_user_enrolled(
-            db, current_user.id, course.id
+        from sqlalchemy import select
+        ucp_result = await db.execute(
+            select(UserCourseProgress).where(
+                UserCourseProgress.user_id == current_user.id,
+                UserCourseProgress.course_id == course.id,
+            )
         )
+        ucp = ucp_result.scalar_one_or_none()
+        course_response.is_enrolled = ucp is not None
+        if ucp is not None:
+            course_response.user_progress = float(ucp.progress_percentage or 0.0)
     
     # Build units with lessons
     # Pre-fetch all completed lesson IDs in 1 query (avoid N+1)
@@ -254,24 +269,27 @@ async def get_course(
             db, current_user.id, list(set(all_lesson_ids))
         )
 
+    from app.services.roadmap_unlock_policy import evaluate_course_unlocks
+
+    unlock_decisions = evaluate_course_unlocks(
+        course.units,
+        completed_lesson_ids,
+        playable_only=True,
+    )
+
     units_with_lessons = []
     for unit in sorted(course.units, key=lambda u: u.order_index):
         lessons = []
         for lesson in sorted(unit.lessons, key=lambda l: l.order_index):
-            # Lessons without authored exercises are not playable — the
-            # learning endpoints reject them, so never advertise them here.
-            if lesson.exercise_count == 0:
+            # Hide empty or draft/quarantined lessons from learners until approved.
+            if lesson.exercise_count == 0 or not is_lesson_learner_visible(lesson):
                 continue
             lesson_data = LessonInUnit.model_validate(lesson)
-            
-            # Check if lesson is locked (prerequisites not met)
-            if current_user and lesson.prerequisites:
-                prerequisites_met = all(
-                    pid in completed_lesson_ids for pid in lesson.prerequisites
-                )
-                lesson_data.is_locked = not prerequisites_met
-            else:
-                lesson_data.is_locked = bool(lesson.prerequisites)  # Locked if has prerequisites
+
+            decision = unlock_decisions.get(lesson.id)
+            lesson_data.is_locked = (
+                decision.is_locked if decision is not None else bool(lesson.prerequisites)
+            )
             
             # Check if lesson is completed
             if current_user:
@@ -293,9 +311,11 @@ async def get_course(
         )
         units_with_lessons.append(unit_with_lessons)
     
-    # Create detailed response
+    # Create detailed response (reflecting only learner-visible published lessons)
+    detail_payload = course_response.model_dump()
+    detail_payload["total_lessons"] = sum(len(u.lessons) for u in units_with_lessons)
     course_detail = CourseDetailResponse(
-        **course_response.model_dump(),
+        **detail_payload,
         units=units_with_lessons
     )
     

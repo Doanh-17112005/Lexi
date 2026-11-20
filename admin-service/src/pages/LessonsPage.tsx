@@ -145,6 +145,7 @@ export const LessonsPage = () => {
 
   const handleEdit = (lesson: LessonItem) => {
     setEditingId(lesson.id);
+    setFormUnitId(lesson.unit_id);
     setForm({
       title: lesson.title,
       description: lesson.description || "",
@@ -168,21 +169,34 @@ export const LessonsPage = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedTitle = form.title.trim();
+    if (!trimmedTitle) {
+      setError("Vui lòng nhập tiêu đề bài học.");
+      return;
+    }
     const targetUnitId = activeUnitId || formUnitId;
-    if (!targetUnitId) return;
+    if (!editingId && !targetUnitId) {
+      setError("Vui lòng chọn chương.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       // "" is the form's "inherit from the course" choice; the API only
       // accepts a real skill name or null.
-      const payload = { ...form, skill: form.skill || null };
+      const normalizedOrder = Number.isFinite(form.order_index) ? Math.max(0, form.order_index) : lessons.length;
+      const payload = {
+        ...form,
+        title: trimmedTitle,
+        order_index: normalizedOrder,
+        skill: form.skill || null,
+      };
       if (editingId) {
         await updateLesson(editingId, payload);
       } else {
         await createLesson({
           ...payload,
-          unit_id: targetUnitId,
-          order_index: form.order_index || lessons.length,
+          unit_id: targetUnitId!,
         });
       }
       resetForm();

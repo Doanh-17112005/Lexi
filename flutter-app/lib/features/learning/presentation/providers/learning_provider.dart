@@ -15,6 +15,10 @@ import 'package:lexilingo_app/features/learning/domain/usecases/submit_answer_us
 import 'package:lexilingo_app/features/learning/domain/usecases/complete_lesson_usecase.dart';
 import 'package:lexilingo_app/features/learning/domain/usecases/get_course_roadmap_usecase.dart';
 import 'package:lexilingo_app/features/learning/domain/usecases/get_lesson_content_usecase.dart';
+import 'package:lexilingo_app/features/mistakes/data/mistake_notebook_repository.dart';
+import 'package:lexilingo_app/features/mistakes/domain/mistake_notebook_entry.dart';
+
+enum LearningSessionPhase { theory, practice }
 
 /// Learning Provider - Manages learning sessions, roadmap, and lesson progress
 class LearningProvider with ChangeNotifier {
@@ -23,6 +27,8 @@ class LearningProvider with ChangeNotifier {
   final CompleteLessonUseCase _completeLessonUseCase;
   final GetCourseRoadmapUseCase _getCourseRoadmapUseCase;
   final GetLessonContentUseCase _getLessonContentUseCase;
+  final Future<void> Function(String lessonId)? _onTheoryViewed;
+  final MistakeNotebookRepository? _mistakeRepository;
 
   LearningProvider({
     required StartLessonUseCase startLessonUseCase,
@@ -30,11 +36,15 @@ class LearningProvider with ChangeNotifier {
     required CompleteLessonUseCase completeLessonUseCase,
     required GetCourseRoadmapUseCase getCourseRoadmapUseCase,
     required GetLessonContentUseCase getLessonContentUseCase,
+    Future<void> Function(String lessonId)? onTheoryViewed,
+    MistakeNotebookRepository? mistakeRepository,
   }) : _startLessonUseCase = startLessonUseCase,
        _submitAnswerUseCase = submitAnswerUseCase,
        _completeLessonUseCase = completeLessonUseCase,
        _getCourseRoadmapUseCase = getCourseRoadmapUseCase,
-       _getLessonContentUseCase = getLessonContentUseCase;
+       _getLessonContentUseCase = getLessonContentUseCase,
+       _onTheoryViewed = onTheoryViewed,
+       _mistakeRepository = mistakeRepository;
 
   // ROADMAP STATE
   CourseRoadmap? _courseRoadmap;
@@ -83,9 +93,18 @@ class LearningProvider with ChangeNotifier {
   int _hintsRemaining = 3;
   DateTime? _exerciseStartTime;
   LessonComplete? _lessonResult;
+  bool _isCompletingLesson = false;
+  bool _hasCompletedLesson = false;
+  LearningSessionPhase _sessionPhase = LearningSessionPhase.practice;
+  bool _theoryViewed = false;
 
   LessonEntity? get currentLesson => _currentLesson;
   LessonAttempt? get currentAttempt => _currentAttempt;
+  LearningSessionPhase get sessionPhase => _sessionPhase;
+  bool get hasGrammarTheory => _currentLesson?.grammarTheory != null;
+  bool get isTheoryPhase =>
+      hasGrammarTheory && _sessionPhase == LearningSessionPhase.theory;
+  bool get theoryViewed => _theoryViewed;
   int get currentExerciseIndex => _currentExerciseIndex;
   int get totalExercises => _currentLesson?.exercises.length ?? 0;
   bool get isLoading => _isLoading;
@@ -98,6 +117,8 @@ class LearningProvider with ChangeNotifier {
   int get livesRemaining => _livesRemaining;
   int get hintsRemaining => _hintsRemaining;
   LessonComplete? get lessonResult => _lessonResult;
+  bool get isCompletingLesson => _isCompletingLesson;
+  bool get hasCompletedLesson => _hasCompletedLesson;
 
   Exercise? get currentExercise {
     if (_currentLesson == null || _currentExerciseIndex >= totalExercises) {
@@ -124,7 +145,13 @@ class LearningProvider with ChangeNotifier {
     _isLoading = true;
     _error = null;
     _isContentUnavailable = false;
+    _currentLesson = null;
+    _currentAttempt = null;
+    _sessionPhase = LearningSessionPhase.practice;
+    _theoryViewed = false;
     _lessonResult = null;
+    _isCompletingLesson = false;
+    _hasCompletedLesson = false;
     notifyListeners();
 
     try {
@@ -154,7 +181,16 @@ class LearningProvider with ChangeNotifier {
           _error = failure.message;
           _isContentUnavailable = failure is ConflictFailure;
         },
-        (lesson) => _currentLesson = lesson,
+        (lesson) {
+          _currentLesson = lesson;
+          if (lesson.grammarTheory != null) {
+            _theoryViewed = lesson.theoryViewed;
+            _sessionPhase = LearningSessionPhase.theory;
+          } else {
+            _theoryViewed = false;
+            _sessionPhase = LearningSessionPhase.practice;
+          }
+        },
       );
 
       _currentExerciseIndex = 0;
@@ -206,6 +242,27 @@ class LearningProvider with ChangeNotifier {
           _livesRemaining = response.livesRemaining;
           _hintsRemaining = response.hintsRemaining;
           _xpEarned += response.xpEarned;
+
+          final resolvedCorrectAnswer =
+              (response.correctAnswer != null &&
+                      response.correctAnswer!.trim().isNotEmpty)
+                  ? response.correctAnswer!
+                  : (response.isCorrect ? answer : exercise.correctAnswer);
+          final resolvedExplanation =
+              (response.explanation != null &&
+                      response.explanation!.trim().isNotEmpty)
+                  ? response.explanation
+                  : exercise.explanation;
+          final updatedExercises = List<Exercise>.from(
+            _currentLesson!.exercises,
+          );
+          updatedExercises[_currentExerciseIndex] = exercise.copyWith(
+            correctAnswer: resolvedCorrectAnswer,
+            explanation: resolvedExplanation,
+          );
+          _currentLesson = _currentLesson!.copyWith(
+            exercises: updatedExercises,
+          );
         },
       );
     } else {
@@ -216,6 +273,34 @@ class LearningProvider with ChangeNotifier {
       } else {
         _livesRemaining = (_livesRemaining - 1).clamp(0, 3);
       }
+    }
+
+    final answeredCorrect = _answerResults[_currentExerciseIndex] ?? true;
+    if (!answeredCorrect && _mistakeRepository != null) {
+      final lesson = _currentLesson!;
+      final latestExercise = lesson.exercises[_currentExerciseIndex];
+      final serverExplanation = _answerResponses[_currentExerciseIndex]?.explanation;
+      final explanation = (serverExplanation != null && serverExplanation.trim().isNotEmpty)
+          ? serverExplanation
+          : (latestExercise.explanation ?? '');
+      unawaited(
+        _mistakeRepository
+            .saveMistake(
+              MistakeNotebookEntry(
+                id: 'lesson_${lesson.id}_${latestExercise.id}',
+                sourceType: 'course_lesson',
+                sourceId: '${lesson.id}:${latestExercise.id}',
+                sourceTitle: lesson.title,
+                question: latestExercise.question,
+                selectedAnswer: answer,
+                correctAnswer: latestExercise.correctAnswer,
+                explanation: explanation,
+                skill: _exerciseTypeToString(latestExercise.type),
+                createdAt: DateTime.now(),
+              ),
+            )
+            .catchError((_) {}),
+      );
     }
     notifyListeners();
   }
@@ -238,11 +323,11 @@ class LearningProvider with ChangeNotifier {
   }
 
   void nextExercise() {
-    if (_currentLesson == null) return;
+    if (_currentLesson == null || isCompleted) return;
     _currentExerciseIndex++;
     _exerciseStartTime = DateTime.now();
     if (_currentExerciseIndex >= totalExercises) {
-      _completeLesson();
+      unawaited(_completeLesson());
     }
     notifyListeners();
   }
@@ -270,33 +355,44 @@ class LearningProvider with ChangeNotifier {
     _livesRemaining = 3;
     _hintsRemaining = 3;
     _lessonResult = null;
+    _isCompletingLesson = false;
+    _hasCompletedLesson = false;
     _exerciseStartTime = DateTime.now();
     notifyListeners();
   }
 
   Future<void> _completeLesson() async {
-    if (_currentAttempt == null) {
-      final correctAnswers = score;
-      final totalQuestions = totalExercises;
-      final percentage = totalQuestions > 0
-          ? (correctAnswers / totalQuestions * 100)
-          : 0.0;
-      _xpEarned = (correctAnswers * 10) + (percentage >= 80 ? 20 : 0);
-      return;
-    }
+    if (_isCompletingLesson || _hasCompletedLesson) return;
+    _isCompletingLesson = true;
 
-    final result = await _completeLessonUseCase(
-      CompleteLessonParams(attemptId: _currentAttempt!.attemptId),
-    );
-    result.fold(
-      (failure) => debugPrint('Complete lesson failed: ${failure.message}'),
-      (lessonComplete) {
-        _lessonResult = lessonComplete;
-        _xpEarned = lessonComplete.totalXpEarned;
-        unawaited(RatingService.instance.onLessonCompleted());
-      },
-    );
-    notifyListeners();
+    try {
+      if (_currentAttempt == null) {
+        final correctAnswers = score;
+        final totalQuestions = totalExercises;
+        final percentage = totalQuestions > 0
+            ? (correctAnswers / totalQuestions * 100)
+            : 0.0;
+        _xpEarned = (correctAnswers * 10) + (percentage >= 80 ? 20 : 0);
+        _hasCompletedLesson = true;
+        return;
+      }
+
+      final result = await _completeLessonUseCase(
+        CompleteLessonParams(attemptId: _currentAttempt!.attemptId),
+      );
+      result.fold(
+        (failure) => debugPrint('Complete lesson failed: ${failure.message}'),
+        (lessonComplete) {
+          _lessonResult = lessonComplete;
+          _xpEarned = lessonComplete.totalXpEarned;
+          _hasCompletedLesson = true;
+          unawaited(RatingService.instance.onLessonCompleted());
+        },
+      );
+    } finally {
+      _isCompletingLesson = false;
+      notifyListeners();
+    }
   }
 
   bool _checkAnswerLocally(Exercise exercise, String answer) {
@@ -395,6 +491,32 @@ class LearningProvider with ChangeNotifier {
     return matrix[len1][len2];
   }
 
+  Future<void> beginPracticePhase() async {
+    if (_currentLesson == null) return;
+    _sessionPhase = LearningSessionPhase.practice;
+    _exerciseStartTime = DateTime.now();
+    final lessonId = _currentLesson!.id;
+    final shouldRecord = !_theoryViewed;
+    if (shouldRecord) {
+      _theoryViewed = true;
+    }
+    notifyListeners();
+
+    if (shouldRecord && _onTheoryViewed != null) {
+      try {
+        await _onTheoryViewed(lessonId);
+      } catch (e) {
+        debugPrint('markTheoryViewed failed (non-blocking): $e');
+      }
+    }
+  }
+
+  void openTheoryReview() {
+    if (!hasGrammarTheory) return;
+    _sessionPhase = LearningSessionPhase.theory;
+    notifyListeners();
+  }
+
   void clearLesson() {
     _currentLesson = null;
     _currentAttempt = null;
@@ -408,6 +530,8 @@ class LearningProvider with ChangeNotifier {
     _hintsRemaining = 3;
     _lessonResult = null;
     _error = null;
+    _sessionPhase = LearningSessionPhase.practice;
+    _theoryViewed = false;
     notifyListeners();
   }
 }

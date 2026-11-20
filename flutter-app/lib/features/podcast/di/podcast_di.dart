@@ -12,7 +12,7 @@ import 'package:lexilingo_app/features/podcast/presentation/providers/podcast_pr
 ///
 /// Async because [AudioService.init] must be awaited on mobile/desktop.
 /// On web, AudioService is not supported — we skip it to avoid startup hang.
-Future<void> registerPodcastModule() async {
+Future<void> registerPodcastModule({bool skipAudioService = false}) async {
   // Repository
   sl.registerLazySingleton<PodcastRepository>(() => PodcastRepository());
 
@@ -23,10 +23,10 @@ Future<void> registerPodcastModule() async {
 
   // Background audio handler — mobile/desktop only.
   // Keep initialization non-blocking so app can render first frame immediately.
-  if (!kIsWeb) {
+  if (!kIsWeb && !skipAudioService) {
     unawaited(_registerPodcastAudioHandler());
   } else {
-    // Web fallback: register handler directly bypassing native audio_service initialization.
+    // Web / test fallback: register handler directly bypassing native audio_service initialization.
     if (!sl.isRegistered<PodcastAudioHandler>()) {
       sl.registerSingleton<PodcastAudioHandler>(PodcastAudioHandler());
     }

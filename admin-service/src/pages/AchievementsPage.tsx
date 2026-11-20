@@ -335,7 +335,10 @@ export const AchievementsPage = () => {
 
   return (
     <div className="stack">
-      <SectionHeader title={t.achievements.title} description={`${items.length} ${t.achievements.description}`} />
+      <SectionHeader
+        title={t.achievements.title}
+        description={`${items.length} ${t.achievements.description} (DB bao gồm cả 4 mốc XP tier được ẩn khỏi màn 44 badge trên Learner app)`}
+      />
 
       {error && <div className="form-error">{error}</div>}
 
@@ -428,7 +431,7 @@ export const AchievementsPage = () => {
 
       {/* Create/Edit Modal */}
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <div className="modal-overlay" role="dialog" aria-modal="true" onClick={() => setShowForm(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
             <h3>{editingId ? t.achievements.editAchievement : t.achievements.createNew}</h3>
             <form className="form" onSubmit={handleSave}>

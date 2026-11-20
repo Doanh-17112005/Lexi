@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:lexilingo_app/core/theme/app_theme.dart';
 import 'package:lexilingo_app/core/widgets/widgets.dart';
+import 'package:lexilingo_app/features/course/presentation/screens/course_detail_screen.dart';
 import 'package:lexilingo_app/features/home/presentation/providers/home_provider.dart';
 import 'package:lexilingo_app/features/progress/presentation/providers/progress_provider.dart';
 import 'package:lexilingo_app/features/progress/presentation/widgets/progress_card.dart';
@@ -184,14 +185,27 @@ class _MyProgressScreenState extends State<MyProgressScreen> {
                     ...courseProgressList.map((courseProgress) {
                       return CourseProgressCard(
                         courseProgress: courseProgress,
-                        onTap: () {
-                          // Navigate to course detail
-                          Navigator.pushNamed(
-                            context,
-                            '/course-detail',
-                            arguments: courseProgress.courseId,
-                          );
-                        },
+                        onTap: courseProgress.courseId.isEmpty
+                            ? null
+                            : () async {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => CourseDetailScreen(
+                                      courseId: courseProgress.courseId,
+                                    ),
+                                  ),
+                                );
+                                if (!context.mounted) return;
+                                await Future.wait([
+                                  context
+                                      .read<ProgressProvider>()
+                                      .fetchMyProgress(),
+                                  context
+                                      .read<HomeProvider>()
+                                      .loadWeeklyProgress(),
+                                ]);
+                              },
                       );
                     }),
                 ],
@@ -281,6 +295,32 @@ class _WeeklyOverviewSectionState extends State<_WeeklyOverviewSection>
                 color: AppColorRoles.textMuted(isDark),
               ),
             ),
+            if (homeProvider.isLoadingWeekly &&
+                weekly.totalXP == 0 &&
+                weekly.totalLessons == 0) ...[
+              const SizedBox(height: 8),
+              const LinearProgressIndicator(minHeight: 3),
+            ] else if (homeProvider.weeklyError != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      homeProvider.weeklyError!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: homeProvider.loadWeeklyProgress,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: Text('common.retry'.tr()),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 12),
             Container(
               decoration: BoxDecoration(

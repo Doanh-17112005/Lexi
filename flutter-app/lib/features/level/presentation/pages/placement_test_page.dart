@@ -6,6 +6,7 @@ import 'package:lexilingo_app/core/theme/app_theme.dart';
 import 'package:lexilingo_app/core/widgets/cefr_badge.dart';
 import 'package:lexilingo_app/features/level/presentation/providers/placement_test_provider.dart';
 import 'package:lexilingo_app/features/level/presentation/providers/proficiency_provider.dart';
+import 'package:lexilingo_app/features/voice/presentation/widgets/speak_button.dart';
 import 'package:provider/provider.dart';
 
 class PlacementTestPage extends StatefulWidget {
@@ -16,39 +17,44 @@ class PlacementTestPage extends StatefulWidget {
 }
 
 class _PlacementTestPageState extends State<PlacementTestPage> {
-  final Map<String, int> _answers = {};
+  final TextEditingController _textController = TextEditingController();
   Timer? _timer;
   int _currentIndex = 0;
   int _elapsedSeconds = 0;
+  bool _showListeningTranscript = false;
+  String? _syncedControllerTaskId;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadTest(reset: true);
+      _loadTest(forceNew: false);
     });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _textController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadTest({bool reset = false}) async {
-    if (reset) {
+  Future<void> _loadTest({bool forceNew = false}) async {
+    final provider = context.read<PlacementTestProvider>();
+    if (forceNew) {
       _timer?.cancel();
-      _answers.clear();
       _currentIndex = 0;
       _elapsedSeconds = 0;
-      context.read<PlacementTestProvider>().reset();
-      if (mounted) setState(() {});
+      _syncedControllerTaskId = null;
+      _textController.clear();
+      provider.reset();
     }
 
-    await context.read<PlacementTestProvider>().loadTest();
+    await provider.loadTest(forceNew: forceNew);
     if (!mounted) return;
 
-    if (context.read<PlacementTestProvider>().questions.isNotEmpty) {
+    if (provider.questions.isNotEmpty) {
+      _syncControllerForCurrentQuestion(provider);
       _startTimer();
     }
   }
@@ -67,33 +73,53 @@ class _PlacementTestPageState extends State<PlacementTestPage> {
     return '$minutes:$seconds';
   }
 
-  void _selectAnswer(String questionId, int optionIndex) {
-    setState(() {
-      _answers[questionId] = optionIndex;
-    });
+  void _syncControllerForCurrentQuestion(PlacementTestProvider provider) {
+    if (_currentIndex >= provider.questions.length) return;
+    final task = provider.questions[_currentIndex];
+    final taskId = '${task['id'] ?? _currentIndex + 1}';
+    if (_syncedControllerTaskId == taskId) return;
+    _syncedControllerTaskId = taskId;
+    final savedText =
+        provider.draftAnswers[taskId]?['text_response']?.toString() ?? '';
+    _textController.value = TextEditingValue(
+      text: savedText,
+      selection: TextSelection.collapsed(offset: savedText.length),
+    );
   }
 
-  void _goToQuestion(int index, int total) {
+  void _goToQuestion(int index, PlacementTestProvider provider) {
+    final total = provider.questions.length;
     if (index < 0 || index >= total) return;
-    setState(() => _currentIndex = index);
+    setState(() {
+      _currentIndex = index;
+      _showListeningTranscript = false;
+      _syncedControllerTaskId = null;
+      _syncControllerForCurrentQuestion(provider);
+    });
   }
 
   Future<void> _submit() async {
     final provider = context.read<PlacementTestProvider>();
     final total = provider.questions.length;
-    if (_answers.length < total) {
+    if (provider.answeredCount < total) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('assessment.answerAllQuestions'.tr())),
       );
       return;
     }
 
-    final submitted = await provider.submitTest(_answers, _elapsedSeconds);
+    final submitted = await provider.submitSixSkillTest(_elapsedSeconds);
     if (!mounted) return;
 
     if (submitted) {
       _timer?.cancel();
-      await context.read<ProficiencyProvider>().loadProfile();
+      try {
+        await context.read<ProficiencyProvider>().loadProfile();
+      } catch (_) {}
+    } else if (provider.errorMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(provider.errorMessage!)),
+      );
     }
   }
 
@@ -131,32 +157,46 @@ class _PlacementTestPageState extends State<PlacementTestPage> {
             if (provider.errorMessage != null && provider.questions.isEmpty) {
               return _ErrorState(
                 message: provider.errorMessage!,
-                onRetry: () => _loadTest(reset: true),
+                onRetry: () => _loadTest(forceNew: false),
               );
             }
 
             if (provider.result != null) {
               return _ResultState(
                 result: provider.result!,
-                onRetake: () => _loadTest(reset: true),
+                onRetake: () => _loadTest(forceNew: true),
               );
             }
 
             if (provider.questions.isEmpty) {
-              return _EmptyState(onRetry: () => _loadTest(reset: true));
+              return _EmptyState(onRetry: () => _loadTest(forceNew: true));
             }
+
+            _syncControllerForCurrentQuestion(provider);
 
             return _QuestionState(
               questions: provider.questions,
               currentIndex: _currentIndex,
-              answers: _answers,
-              isSubmitting: provider.isLoading,
+              draftAnswers: provider.draftAnswers,
+              answeredCount: provider.answeredCount,
+              isSubmitting: provider.isSubmitting,
               elapsedLabel: _formatElapsedTime(),
-              onSelectAnswer: _selectAnswer,
-              onPrevious: () =>
-                  _goToQuestion(_currentIndex - 1, provider.questions.length),
-              onNext: () =>
-                  _goToQuestion(_currentIndex + 1, provider.questions.length),
+              disclaimer: provider.disclaimer,
+              textController: _textController,
+              showListeningTranscript: _showListeningTranscript,
+              onToggleTranscript: () => setState(
+                () => _showListeningTranscript = !_showListeningTranscript,
+              ),
+              onSelectOption: (taskId, optIndex) => provider.saveAnswer(
+                taskId: taskId,
+                selectedOption: optIndex,
+              ),
+              onTextChanged: (taskId, value) => provider.saveAnswer(
+                taskId: taskId,
+                textResponse: value,
+              ),
+              onPrevious: () => _goToQuestion(_currentIndex - 1, provider),
+              onNext: () => _goToQuestion(_currentIndex + 1, provider),
               onSubmit: _submit,
             );
           },
@@ -170,10 +210,16 @@ class _QuestionState extends StatelessWidget {
   const _QuestionState({
     required this.questions,
     required this.currentIndex,
-    required this.answers,
+    required this.draftAnswers,
+    required this.answeredCount,
     required this.isSubmitting,
     required this.elapsedLabel,
-    required this.onSelectAnswer,
+    required this.disclaimer,
+    required this.textController,
+    required this.showListeningTranscript,
+    required this.onToggleTranscript,
+    required this.onSelectOption,
+    required this.onTextChanged,
     required this.onPrevious,
     required this.onNext,
     required this.onSubmit,
@@ -181,10 +227,16 @@ class _QuestionState extends StatelessWidget {
 
   final List<Map<String, dynamic>> questions;
   final int currentIndex;
-  final Map<String, int> answers;
+  final Map<String, Map<String, dynamic>> draftAnswers;
+  final int answeredCount;
   final bool isSubmitting;
   final String elapsedLabel;
-  final void Function(String questionId, int optionIndex) onSelectAnswer;
+  final String? disclaimer;
+  final TextEditingController textController;
+  final bool showListeningTranscript;
+  final VoidCallback onToggleTranscript;
+  final void Function(String taskId, int optionIndex) onSelectOption;
+  final void Function(String taskId, String value) onTextChanged;
   final VoidCallback onPrevious;
   final VoidCallback onNext;
   final VoidCallback onSubmit;
@@ -192,12 +244,28 @@ class _QuestionState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final question = questions[currentIndex];
-    final questionId = '${question['id'] ?? currentIndex + 1}';
+    final taskId = '${question['id'] ?? currentIndex + 1}';
+    final taskType = question['task_type']?.toString() ?? 'mcq';
+    final isRubricTask =
+        taskType == 'speaking_rubric' || taskType == 'writing_rubric';
     final options = List<String>.from(question['options'] ?? const <String>[]);
-    final selectedOption = answers[questionId];
+    final savedAnswer = draftAnswers[taskId];
+    final selectedOption = savedAnswer?['selected_option'] as int?;
+    final currentText = savedAnswer?['text_response']?.toString() ?? '';
+    final wordCount = currentText
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .length;
+    final minWords = question['min_words'] as int? ?? 15;
+    final rubricCriteria = List<String>.from(
+      question['rubric_criteria'] ?? const <String>[],
+    );
+    final passage = question['passage']?.toString();
+    final listeningScript = question['listening_script']?.toString();
+
     final isLast = currentIndex == questions.length - 1;
     final progress = (currentIndex + 1) / questions.length;
-    final answeredCount = answers.length;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final accent = AppColorRoles.primary(isDark);
     final surface = isDark ? AppColors.surfaceDarkMuted : Colors.white;
@@ -206,6 +274,20 @@ class _QuestionState extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: [
+        if (disclaimer != null && disclaimer!.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              disclaimer!,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
         Row(
           children: [
             Expanded(
@@ -265,7 +347,7 @@ class _QuestionState extends StatelessWidget {
                     size: CefrBadgeSize.large,
                   ),
                   _TextChip(
-                    label: '${question['skill'] ?? 'general'}',
+                    label: '${question['skill'] ?? 'general'}'.toUpperCase(),
                     icon: Icons.psychology_alt_rounded,
                   ),
                   _TextChip(
@@ -277,6 +359,67 @@ class _QuestionState extends StatelessWidget {
                   _TextChip(label: elapsedLabel, icon: Icons.timer_rounded),
                 ],
               ),
+              if (passage != null && passage.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? AppColors.surfaceDarkInput
+                        : AppColors.grey50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: border),
+                  ),
+                  child: Text(
+                    passage,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      height: 1.45,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              ],
+              if (listeningScript != null && listeningScript.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          SpeakIconButton(text: listeningScript, color: accent),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text(
+                              'Nhấn biểu tượng loa để nghe đoạn hội thoại / thông báo',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: onToggleTranscript,
+                            child: Text(
+                              showListeningTranscript
+                                  ? 'Ẩn lời thoại'
+                                  : 'Xem lời thoại',
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (showListeningTranscript) ...[
+                        const Divider(),
+                        Text(listeningScript),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 18),
               Text(
                 '${question['question'] ?? ''}',
@@ -285,15 +428,64 @@ class _QuestionState extends StatelessWidget {
                   height: 1.25,
                 ),
               ),
-              const SizedBox(height: 18),
-              for (var i = 0; i < options.length; i++) ...[
-                _AnswerOption(
-                  index: i,
-                  text: options[i],
-                  selected: selectedOption == i,
-                  onTap: () => onSelectAnswer(questionId, i),
+              const SizedBox(height: 16),
+              if (isRubricTask) ...[
+                if (question['prompt_hint'] != null) ...[
+                  Text(
+                    '${question['prompt_hint']}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColorRoles.textSecondary(isDark),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                if (rubricCriteria.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? AppColors.surfaceDarkInput
+                          : AppColors.grey50,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Tiêu chí chấm điểm (Deterministic Rubric):',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 6),
+                        for (final c in rubricCriteria) Text('• $c'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                TextField(
+                  controller: textController,
+                  minLines: 4,
+                  maxLines: 7,
+                  onChanged: (val) => onTextChanged(taskId, val),
+                  decoration: InputDecoration(
+                    hintText: taskType == 'speaking_rubric'
+                        ? 'Nhập hoặc ghi âm phần trả lời nói của bạn bằng tiếng Anh...'
+                        : 'Viết đoạn văn ngắn bằng tiếng Anh của bạn tại đây...',
+                    border: const OutlineInputBorder(),
+                    helperText: 'Số từ hiện tại: $wordCount (khuyến nghị >= $minWords từ)',
+                  ),
                 ),
-                if (i != options.length - 1) const SizedBox(height: 10),
+              ] else ...[
+                for (var i = 0; i < options.length; i++) ...[
+                  _AnswerOption(
+                    index: i,
+                    text: options[i],
+                    selected: selectedOption == i,
+                    onTap: () => onSelectOption(taskId, i),
+                  ),
+                  if (i != options.length - 1) const SizedBox(height: 10),
+                ],
               ],
             ],
           ),
@@ -439,6 +631,12 @@ class _ResultState extends StatelessWidget {
     final score = result['score_percentage'] ?? 0;
     final correct = result['correct_count'] ?? 0;
     final total = result['total_questions'] ?? 0;
+    final skillScores = result['skill_scores'] is Map
+        ? Map<String, dynamic>.from(result['skill_scores'] as Map)
+        : const <String, dynamic>{};
+    final recommendations = (result['recommendations'] as List?) ?? const [];
+    final recCourses = (result['recommended_courses'] as List?) ?? const [];
+    final disclaimer = result['disclaimer']?.toString() ?? '';
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
@@ -476,15 +674,20 @@ class _ResultState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Text(
-                'assessment.resultSubtitle'.tr(),
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColorRoles.textSecondary(isDark),
-                  height: 1.35,
+              if (disclaimer.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    disclaimer,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               CefrBadge(
                 level: level,
                 size: CefrBadgeSize.large,
@@ -515,12 +718,75 @@ class _ResultState extends StatelessWidget {
                   ),
                 ],
               ),
-              if (result['rank_name'] != null) ...[
-                const SizedBox(height: 10),
-                _ResultMetric(
-                  label: 'assessment.rank'.tr(),
-                  value: '${result['rank_name']}',
+              if (skillScores.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Kết quả theo 6 kỹ năng',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
                 ),
+                const SizedBox(height: 10),
+                for (final entry in skillScores.entries) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(entry.key.toUpperCase()),
+                            Text('${entry.value}%'),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        LinearProgressIndicator(
+                          value: ((num.tryParse('${entry.value}') ?? 0) / 100.0)
+                              .clamp(0.0, 1.0),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+              if (recommendations.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Đề xuất cải thiện',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (final rec in recommendations.whereType<Map>())
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.lightbulb_outline),
+                    title: Text('${rec['skill']}'.toUpperCase()),
+                    subtitle: Text('${rec['advice'] ?? ''}'),
+                  ),
+              ],
+              if (recCourses.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Khóa học phù hợp',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+                for (final c in recCourses.whereType<Map>())
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.school_outlined),
+                    title: Text('${c['title']}'),
+                    subtitle: Text('CEFR ${c['level']} • ${c['total_lessons']} bài'),
+                  ),
               ],
               const SizedBox(height: 22),
               Row(

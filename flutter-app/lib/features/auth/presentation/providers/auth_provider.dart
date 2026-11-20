@@ -22,6 +22,7 @@ import 'package:lexilingo_app/features/auth/domain/usecases/sign_out_usecase.dar
 import 'package:lexilingo_app/features/auth/domain/usecases/register_usecase.dart';
 
 import 'package:lexilingo_app/features/auth/domain/usecases/sign_in_with_facebook_usecase.dart';
+import 'package:lexilingo_app/features/auth/data/services/guest_session_service.dart';
 import 'package:lexilingo_app/core/services/facebook_sign_in_service.dart';
 import 'package:easy_localization/easy_localization.dart';
 
@@ -41,6 +42,7 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoading = false;
   bool _isCheckingAuth = true;
   bool _isJustLoggedIn = false;
+  bool _isGuestMode = false;
   bool _registrationRequiresVerification = true;
   String? _errorMessage;
   late final StreamSubscription<void> _sessionExpiredSub;
@@ -81,6 +83,7 @@ class AuthProvider extends ChangeNotifier {
   UserEntity? get user => _user;
   UserEntity? get currentUser => _user;
   bool get isAuthenticated => _user != null;
+  bool get isGuestMode => _user == null && _isGuestMode;
   bool get isLoading => _isLoading;
   bool get isCheckingAuth => _isCheckingAuth;
   bool get isJustLoggedIn => _isJustLoggedIn;
@@ -91,6 +94,19 @@ class AuthProvider extends ChangeNotifier {
   // Clear just logged in flag (call after welcome screen)
   void clearJustLoggedIn() {
     _isJustLoggedIn = false;
+    notifyListeners();
+  }
+
+  Future<void> enterGuestMode() async {
+    _isGuestMode = true;
+    _errorMessage = null;
+    await GuestSessionService().setGuestActive(true);
+    notifyListeners();
+  }
+
+  Future<void> exitGuestMode() async {
+    _isGuestMode = false;
+    await GuestSessionService().setGuestActive(false);
     notifyListeners();
   }
 
@@ -126,6 +142,7 @@ class AuthProvider extends ChangeNotifier {
       if (!hasStoredSession) {
         _user = null;
         _errorMessage = null;
+        _isGuestMode = await GuestSessionService().isGuestActive();
         UserScopeService.clearActiveUserId();
         return;
       }
@@ -273,6 +290,8 @@ class AuthProvider extends ChangeNotifier {
           _user = user;
           _errorMessage = null;
           _isJustLoggedIn = true;
+          _isGuestMode = false;
+          unawaited(GuestSessionService().setGuestActive(false));
           FirebaseMessagingService.instance.registerTokenWithBackend(
             sl<ApiClient>(),
           );
@@ -314,6 +333,8 @@ class AuthProvider extends ChangeNotifier {
           _user = user;
           _errorMessage = null;
           _isJustLoggedIn = true;
+          _isGuestMode = false;
+          unawaited(GuestSessionService().setGuestActive(false));
           FirebaseMessagingService.instance.registerTokenWithBackend(
             sl<ApiClient>(),
           );

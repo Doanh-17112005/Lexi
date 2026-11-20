@@ -23,7 +23,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <App />
-        <Analytics />
+        {import.meta.env.PROD && <Analytics />}
       </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>

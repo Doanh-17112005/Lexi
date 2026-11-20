@@ -190,6 +190,45 @@ class TestGetCourses:
         assert pagination["page"] == 3
         assert pagination["page_size"] == 5
 
+    @pytest.mark.asyncio
+    async def test_authenticated_returns_user_progress(self, auth_client: AsyncClient):
+        from app.main import app
+        from app.core.dependencies import get_current_user_optional
+
+        course_uuid = uuid.UUID(COURSE_ID)
+        mock_course = MagicMock()
+        mock_course.id = course_uuid
+        mock_course.title = "English Basics"
+        mock_course.description = "Beginner English"
+        mock_course.language = "en"
+        mock_course.level = "A1"
+        mock_course.tags = ["grammar"]
+        mock_course.thumbnail_url = None
+        mock_course.total_lessons = 1
+        mock_course.total_xp = 100
+        mock_course.estimated_duration = 60
+
+        mock_user = MagicMock()
+        mock_user.id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+        async def mock_get_current_user_optional():
+            return mock_user
+
+        app.dependency_overrides[get_current_user_optional] = mock_get_current_user_optional
+        try:
+            with patch("app.crud.course.CourseCRUD.get_courses", new=AsyncMock(return_value=([mock_course], 1))), \
+                 patch("app.crud.course.CourseCRUD.get_enrolled_course_progress", new=AsyncMock(return_value={course_uuid: 100.0})), \
+                 patch("app.routes.courses.get_cached", new=AsyncMock(return_value=None)), \
+                 patch("app.routes.courses.set_cached", new=AsyncMock()):
+                response = await auth_client.get(BASE)
+        finally:
+            app.dependency_overrides.pop(get_current_user_optional, None)
+
+        assert response.status_code == 200
+        item = response.json()["data"][0]
+        assert item["is_enrolled"] is True
+        assert item["user_progress"] == 100.0
+
 
 # ============================================================================
 # GET /api/v1/courses/enrolled  — Auth required
@@ -275,6 +314,63 @@ class TestGetCourseDetail:
         assert response.status_code == 200
         assert "data" in response.json()
 
+    @pytest.mark.asyncio
+    async def test_authenticated_course_detail_includes_user_progress(self):
+        from app.main import app
+        from app.core.database import get_db
+        from app.core.dependencies import get_current_user_optional
+
+        course_uuid = uuid.UUID(COURSE_ID)
+        mock_course = MagicMock()
+        mock_course.id = course_uuid
+        mock_course.title = "English Basics"
+        mock_course.description = "Learn basics"
+        mock_course.language = "en"
+        mock_course.level = "A1"
+        mock_course.skill = None
+        mock_course.tags = []
+        mock_course.thumbnail_url = None
+        mock_course.total_lessons = 1
+        mock_course.total_xp = 100
+        mock_course.estimated_duration = 60
+        mock_course.is_published = True
+        mock_course.is_enrolled = None
+        mock_course.units = []
+
+        mock_ucp = MagicMock()
+        mock_ucp.progress_percentage = 100.0
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_ucp
+
+        mock_session = MagicMock()
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        mock_user = MagicMock()
+        mock_user.id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+        async def mock_get_db():
+            yield mock_session
+
+        async def mock_get_current_user_optional():
+            return mock_user
+
+        app.dependency_overrides[get_db] = mock_get_db
+        app.dependency_overrides[get_current_user_optional] = mock_get_current_user_optional
+
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                with patch("app.crud.course.CourseCRUD.get_course_with_units", new=AsyncMock(return_value=mock_course)), \
+                     patch("app.crud.course.LessonCRUD.get_completed_lesson_ids", new=AsyncMock(return_value=set())):
+                    response = await client.get(f"{BASE}/{COURSE_ID}")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        detail = response.json()["data"]
+        assert detail["is_enrolled"] is True
+        assert detail["user_progress"] == 100.0
+
 
 # ============================================================================
 # POST /api/v1/courses/{course_id}/enroll  — Auth required
@@ -332,3 +428,68 @@ class TestEnrollInCourse:
     async def test_invalid_uuid_returns_422(self, auth_client: AsyncClient):
         response = await auth_client.post(f"{BASE}/not-a-uuid/enroll")
         assert response.status_code == 422
+
+
+class TestGetCoursesByCategory:
+    """Tests for GET /api/v1/categories/{category_id}/courses."""
+
+    @pytest.mark.asyncio
+    async def test_authenticated_category_courses_include_user_progress(self):
+        from app.main import app
+        from app.core.database import get_db
+        from app.core.dependencies import get_current_user_optional
+
+        category_uuid = uuid.UUID("00000000-0000-0000-0000-000000000099")
+        course_uuid = uuid.UUID(COURSE_ID)
+        mock_category = MagicMock()
+        mock_category.id = category_uuid
+
+        mock_course = MagicMock()
+        mock_course.id = course_uuid
+        mock_course.title = "English Basics"
+        mock_course.description = "Learn basics"
+        mock_course.language = "en"
+        mock_course.level = "A1"
+        mock_course.tags = ["grammar"]
+        mock_course.thumbnail_url = None
+        mock_course.total_lessons = 2
+        mock_course.total_xp = 100
+        mock_course.estimated_duration = 30
+
+        mock_session = MagicMock()
+        mock_user = MagicMock()
+        mock_user.id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+
+        async def mock_get_db():
+            yield mock_session
+
+        async def mock_get_current_user_optional():
+            return mock_user
+
+        app.dependency_overrides[get_db] = mock_get_db
+        app.dependency_overrides[get_current_user_optional] = mock_get_current_user_optional
+
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                with patch(
+                    "app.crud.course_category.CourseCategoryCRUD.get_category_by_id",
+                    new=AsyncMock(return_value=mock_category),
+                ), patch(
+                    "app.crud.course_category.CourseCategoryCRUD.get_courses_by_category",
+                    new=AsyncMock(return_value=([mock_course], 1)),
+                ), patch(
+                    "app.crud.course.CourseCRUD.get_enrolled_course_progress",
+                    new=AsyncMock(return_value={course_uuid: 100.0}),
+                ):
+                    response = await client.get(
+                        f"/api/v1/categories/{category_uuid}/courses"
+                    )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        items = response.json()["data"]
+        assert len(items) == 1
+        assert items[0]["is_enrolled"] is True
+        assert items[0]["user_progress"] == 100.0

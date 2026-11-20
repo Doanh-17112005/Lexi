@@ -339,6 +339,27 @@ class CourseProvider with ChangeNotifier {
           _courseDetail = detail;
           _detailCache[courseId] = detail;
           _detailError = null;
+          final index = _courses.indexWhere((c) => c.id == courseId);
+          if (index != -1) {
+            _courses[index] = _courses[index].copyWith(
+              isEnrolled: detail.isEnrolled ?? _courses[index].isEnrolled,
+              userProgress: detail.userProgress ?? _courses[index].userProgress,
+            );
+          }
+          final enrolledIndex = _enrolledCourses.indexWhere(
+            (c) => c.id == courseId,
+          );
+          if (enrolledIndex != -1) {
+            _enrolledCourses[enrolledIndex] = _enrolledCourses[enrolledIndex]
+                .copyWith(
+                  isEnrolled:
+                      detail.isEnrolled ??
+                      _enrolledCourses[enrolledIndex].isEnrolled,
+                  userProgress:
+                      detail.userProgress ??
+                      _enrolledCourses[enrolledIndex].userProgress,
+                );
+          }
         },
       );
     } catch (e) {

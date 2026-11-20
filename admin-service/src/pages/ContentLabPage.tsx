@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { SectionHeader } from "../components/SectionHeader";
 import { DataTable } from "../components/DataTable";
 import {
@@ -149,13 +150,20 @@ export const ContentLabPage = () => {
 
   const handleCreateGrammar = async (event: React.FormEvent) => {
     event.preventDefault();
+    setError(null);
+    const title = grammarForm.title.trim();
+    const content = grammarForm.content.trim();
+    if (!title || !content) {
+      setError("Vui lòng nhập đầy đủ Tiêu đề và Nội dung Grammar.");
+      return;
+    }
     try {
       const payload = {
-        title: grammarForm.title,
+        title,
         level: grammarForm.level,
-        topic: grammarForm.topic || undefined,
-        summary: grammarForm.summary || undefined,
-        content: grammarForm.content,
+        topic: grammarForm.topic.trim() || undefined,
+        summary: grammarForm.summary.trim() || undefined,
+        content,
         tags: grammarForm.tags.split(",").map((t) => t.trim()).filter(Boolean)
       };
       if (editingGrammarId) {
@@ -198,14 +206,43 @@ export const ContentLabPage = () => {
 
   const handleCreateQuestion = async (event: React.FormEvent) => {
     event.preventDefault();
+    setError(null);
+    const prompt = questionForm.prompt.trim();
+    if (!prompt) {
+      setError("Vui lòng nhập nội dung câu hỏi (Prompt).");
+      return;
+    }
+    let parsedOptions: unknown[] | undefined;
+    if (questionForm.options.trim()) {
+      try {
+        const parsed = JSON.parse(questionForm.options);
+        if (!Array.isArray(parsed)) {
+          setError('Options phải là một JSON array (vd: ["A", "B"]).');
+          return;
+        }
+        parsedOptions = parsed;
+      } catch {
+        setError('Options phải là JSON array hợp lệ (vd: ["A", "B"]).');
+        return;
+      }
+    }
+    let parsedAnswer: unknown;
+    if (questionForm.answer.trim()) {
+      try {
+        parsedAnswer = JSON.parse(questionForm.answer);
+      } catch {
+        setError('Answer phải là JSON hợp lệ (vd: "A" hoặc 0).');
+        return;
+      }
+    }
     try {
       const payload = {
-        prompt: questionForm.prompt,
+        prompt,
         question_type: questionForm.question_type,
         difficulty_level: questionForm.difficulty_level,
-        options: questionForm.options ? JSON.parse(questionForm.options) : undefined,
-        answer: questionForm.answer ? JSON.parse(questionForm.answer) : undefined,
-        explanation: questionForm.explanation || undefined,
+        options: parsedOptions,
+        answer: parsedAnswer,
+        explanation: questionForm.explanation.trim() || undefined,
         tags: questionForm.tags.split(",").map((t) => t.trim()).filter(Boolean)
       };
       if (editingQuestionId) {
@@ -248,13 +285,29 @@ export const ContentLabPage = () => {
 
   const handleCreateTest = async (event: React.FormEvent) => {
     event.preventDefault();
+    setError(null);
+    const title = testForm.title.trim();
+    if (!title) {
+      setError("Vui lòng nhập tiêu đề Test Exam.");
+      return;
+    }
+    const duration = Number(testForm.duration_minutes);
+    const passing = Number(testForm.passing_score);
+    if (!Number.isFinite(duration) || duration < 1) {
+      setError("Thời lượng phải từ 1 phút trở lên.");
+      return;
+    }
+    if (!Number.isFinite(passing) || passing < 0 || passing > 100) {
+      setError("Điểm đạt phải từ 0 đến 100.");
+      return;
+    }
     try {
       const payload = {
-        title: testForm.title,
-        description: testForm.description || undefined,
+        title,
+        description: testForm.description.trim() || undefined,
         level: testForm.level,
-        duration_minutes: Number(testForm.duration_minutes),
-        passing_score: Number(testForm.passing_score),
+        duration_minutes: duration,
+        passing_score: passing,
         question_ids: testForm.question_ids
           ? testForm.question_ids.split(",").map((id) => id.trim()).filter(Boolean)
           : undefined,
@@ -702,7 +755,7 @@ export const ContentLabPage = () => {
                   <strong>Nội dung:</strong> {generatedLesson.vocabulary_saved} từ vựng · {generatedLesson.quizzes.length} quiz · {generatedLesson.lesson.estimated_minutes} phút
                 </p>
                 <div className="form-row">
-                  <a className="primary-button" href="/admin/courses">Mở khóa học</a>
+                  <Link className="primary-button" to="/admin/courses">Mở khóa học</Link>
                   <button
                     className="ghost-button"
                     type="button"

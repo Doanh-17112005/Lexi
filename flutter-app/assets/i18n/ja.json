@@ -1433,7 +1433,8 @@
     "startLesson": "レッスンを開始する",
     "correct": "正しい！",
     "notQuite": "完全ではありません",
-    "loadingRoadmap": "ロードマップを読み込み中…"
+    "loadingRoadmap": "ロードマップを読み込み中…",
+    "lessonLockedHint": "前のレッスンを完了するとこのレッスンがアンロックされます。"
   },
   "books": {
     "library": "図書室",

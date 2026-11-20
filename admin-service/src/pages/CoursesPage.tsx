@@ -141,11 +141,24 @@ export const CoursesPage = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedTitle = form.title.trim();
+    const trimmedLang = form.language.trim();
+    if (!trimmedTitle) {
+      setError("Vui lòng nhập tiêu đề khóa học.");
+      return;
+    }
+    if (trimmedLang.length < 2 || trimmedLang.length > 10) {
+      setError("Mã ngôn ngữ phải từ 2–10 ký tự (vd: en, vi).");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       const payload = {
         ...form,
+        title: trimmedTitle,
+        language: trimmedLang,
+        thumbnail_url: form.thumbnail_url.trim() || undefined,
         // "" is the form's "no label yet" choice; the API accepts a real
         // skill name or null, and null keeps the tag-based fallback.
         skill: form.skill || null,

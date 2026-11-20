@@ -53,8 +53,8 @@ def _cache_disabled() -> bool:
 
 def _allow_cache_when_disabled(key: str) -> bool:
     """Allow select stateful keys in tests even when response-cache is disabled."""
-    # Social location sharing relies on cache as source-of-truth for nearby users.
-    return key.startswith("social_location:")
+    # Social location, review idempotency, and theory-view state rely on cache as stateful stores.
+    return key.startswith(("social_location:", "vocab_review_idem:", "grammar_theory_viewed:"))
 
 def compute_cache_version(value: Any) -> str:
     """Compute a stable cache-version hash for any JSON-serializable payload."""

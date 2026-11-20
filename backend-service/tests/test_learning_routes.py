@@ -490,7 +490,8 @@ class TestCourseRoadmap:
             assert [
                 lesson["lesson_number"] for lesson in unit_data["lessons"]
             ] == [1, 2]
-            assert unit_data["lessons"][0]["is_locked"] is False
+            expected_first_locked = unit_data["unit_number"] > 1
+            assert unit_data["lessons"][0]["is_locked"] is expected_first_locked
             assert unit_data["lessons"][1]["is_locked"] is True
 
     async def test_roadmap_lesson_lock_state(

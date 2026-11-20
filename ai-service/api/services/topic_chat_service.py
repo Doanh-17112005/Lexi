@@ -8,10 +8,11 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Callable, Coroutine
 
 from api.repositories.topic_chat_repository import TopicChatRepository
+from api.services.ai_safety import scrub_sensitive_output
 from api.services.lexi_chat_service import HEARTBEAT_INTERVAL_S
 from api.services.subgraph_hot_cache import get_subgraph
 import os
@@ -57,7 +58,7 @@ def sanitize_topic_response(text: str) -> str:
         if tail and has_json_punct and not long_alpha_tokens:
             candidate = candidate[: last_sentence_end + 1].strip()
 
-    return candidate
+    return scrub_sensitive_output(candidate, fallback=SAFE_FIXED_RESPONSE)
 
 
 async def _run_with_heartbeats(
@@ -153,11 +154,13 @@ async def call_tracecag_with_retry(
         if not ai_response:
             raise RuntimeError("TraceCAG returned empty tutor_response")
         graph_metadata = graph_result.get("metadata", {}) or {}
+        models_used = graph_metadata.get("models_used") or ["trace-cag_pipeline"]
+        used_safe_fallback = "safe_tutor_fallback" in models_used
         llm_metadata = {
-            "provider": "trace-cag",
-            "model": ", ".join(graph_metadata.get("models_used") or ["trace-cag_pipeline"]),
+            "provider": "trace-cag_safe_response" if used_safe_fallback else "trace-cag",
+            "model": ", ".join(models_used),
             "latency_ms": int((time.time() - graph_start) * 1000),
-            "fallback_used": preferred_llm != "trace-cag",
+            "fallback_used": used_safe_fallback or preferred_llm != "trace-cag",
         }
         logger.info("Topic chat response via TraceCAG")
         return TracecagResult(
@@ -228,6 +231,7 @@ async def persist_topic_turn(
 ) -> str:
     """Insert user + AI messages, update session activity. Returns ai_message_id."""
     now = datetime.now(timezone.utc)
+    assistant_ts = now + timedelta(milliseconds=1)
 
     ai_message_id = str(uuid.uuid4())
     await repo.insert_messages_bulk([
@@ -244,10 +248,10 @@ async def persist_topic_turn(
             "session_id": session_id,
             "content": ai_response,
             "role": "assistant",
-            "timestamp": now,
+            "timestamp": assistant_ts,
         },
     ])
-    await repo.update_session_activity(session_id, now, message_count_increment=2)
+    await repo.update_session_activity(session_id, assistant_ts, message_count_increment=2)
     return ai_message_id
 
 

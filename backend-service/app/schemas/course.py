@@ -133,6 +133,7 @@ class CourseListItem(BaseModel):
     total_xp: int = 0
     estimated_duration: int = 0
     is_enrolled: Optional[bool] = None
+    user_progress: Optional[float] = None
     
     @field_validator("tags", mode="before")
     @classmethod
@@ -350,7 +351,7 @@ class ExerciseOption(BaseModel):
     """Option for multiple choice exercises."""
     id: str
     text: str
-    is_correct: bool = False
+    is_correct: Optional[bool] = None
 
 
 class Exercise(BaseModel):
@@ -361,7 +362,7 @@ class Exercise(BaseModel):
     phase: Optional[Literal["pre_task", "task_cycle", "language_focus"]] = None
     question: str
     options: Optional[List[ExerciseOption]] = None
-    correct_answer: str
+    correct_answer: Optional[str] = None
     explanation: Optional[str] = None
     hint: Optional[str] = None
     audio_url: Optional[str] = None
@@ -378,6 +379,27 @@ class Exercise(BaseModel):
         return v
 
 
+class GrammarTheoryResponse(BaseModel):
+    """Sanitized learner-facing grammar theory attached to a lesson."""
+    grammar_item_id: Optional[uuid.UUID] = None
+    version: Optional[str] = None
+    title: str
+    level: Optional[str] = None
+    topic: Optional[str] = None
+    summary: Optional[str] = None
+    explanation: str
+    examples: List[Any] = Field(default_factory=list)
+    grammar_points: List[Any] = Field(default_factory=list)
+    linked_exercise_ids: List[str] = Field(default_factory=list)
+
+
+class TheoryViewedResponse(BaseModel):
+    """Response when marking lesson grammar theory as viewed."""
+    lesson_id: uuid.UUID
+    theory_viewed: bool = True
+    viewed_at: datetime
+
+
 class LessonContentResponse(BaseModel):
     """Lesson content with exercises for learning session."""
     id: uuid.UUID
@@ -391,5 +413,7 @@ class LessonContentResponse(BaseModel):
     estimated_minutes: int
     total_exercises: int
     exercises: List[Exercise] = Field(default_factory=list)
+    grammar_theory: Optional[GrammarTheoryResponse] = None
+    theory_viewed: bool = False
     
     model_config = ConfigDict(from_attributes=True)

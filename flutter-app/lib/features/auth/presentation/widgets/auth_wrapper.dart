@@ -18,6 +18,8 @@ import '../../../home/presentation/pages/main_screen.dart';
 import '../pages/login_page.dart';
 import '../pages/register_page.dart';
 import '../pages/welcome_page.dart';
+import '../pages/guest_trial_shell_page.dart';
+import '../../data/services/guest_session_service.dart';
 import '../pages/onboarding_page.dart';
 import '../pages/pre_auth_questions_page.dart';
 
@@ -44,6 +46,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
   // rebuild, not be silently skipped for the rest of the session.
   String? _entitlementSyncedForUserId;
   bool _isSyncingEntitlements = false;
+  String? _guestConversionCheckedForUserId;
   PreAuthAnswers? _pendingPreAuthAnswers;
 
   static const String _preAuthAnswersKey = 'pre_auth_answers_pending';
@@ -163,6 +166,65 @@ class _AuthWrapperState extends State<AuthWrapper> {
       _flowResolvedForUserId = userId;
       _isResolvingFlow = false;
     });
+
+    await _maybeOfferGuestConversion(userId);
+  }
+
+  Future<void> _maybeOfferGuestConversion(String userId) async {
+    if (!mounted || _guestConversionCheckedForUserId == userId) return;
+    _guestConversionCheckedForUserId = userId;
+
+    final service = GuestSessionService();
+    final shouldOffer = await service.canOfferConversionFor(userId);
+    if (!mounted || !shouldOffer) return;
+
+    final progress = await service.loadProgress();
+    if (!mounted) return;
+
+    final save = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Chuyển tiến độ Học thử?'),
+        content: Text(
+          'Bạn có ${progress.learnedVocabIds.length} từ đã học và ${progress.guestXp} XP tạm thời từ chế độ Học thử. Lưu ghi chú lỗi sai và đánh dấu đã chuyển vào tài khoản này?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Bỏ qua'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Lưu tiến độ'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+
+    if (save == true) {
+      try {
+        final res = await service.migrateToAuthenticatedAccount(userId: userId);
+        if (!mounted) return;
+        if (res.migrated) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Đã lưu tiến độ học thử (${res.migratedMistakesCount} ghi chú lỗi sai).',
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không thể chuyển tiến độ học thử: $e')),
+        );
+      }
+    } else {
+      await service.declineConversion(userId);
+    }
   }
 
   Future<void> _completeOnboarding(
@@ -315,10 +377,36 @@ class _AuthWrapperState extends State<AuthWrapper> {
         currentPage = Scaffold(
           body: LoadingScreen(message: 'common.loading'.tr()),
         );
+      } else if (authProvider.isGuestMode) {
+        currentPage = LearnerTheme(
+          child: GuestTrialShellPage(
+            onSignInRequested: () async {
+              await authProvider.exitGuestMode();
+              if (!mounted) return;
+              setState(() {
+                _showPreAuthWelcome = false;
+                _showPreAuthQuestions = false;
+                _isShowingRegister = false;
+                _preAuthFlowResolved = true;
+              });
+            },
+            onRegisterRequested: () async {
+              await authProvider.exitGuestMode();
+              if (!mounted) return;
+              setState(() {
+                _showPreAuthWelcome = false;
+                _showPreAuthQuestions = false;
+                _isShowingRegister = true;
+                _preAuthFlowResolved = true;
+              });
+            },
+          ),
+        );
       } else if (_showPreAuthWelcome) {
         currentPage = WelcomePage(
           onGetStarted: _startPreAuthQuestions,
           onSkip: () => _dismissPreAuthWelcome(openRegister: false),
+          onTryAsGuest: () => authProvider.enterGuestMode(),
         );
       } else if (_showPreAuthQuestions) {
         currentPage = PreAuthQuestionsPage(
@@ -376,9 +464,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
         key: ValueKey<String>(
           authProvider.isAuthenticated
               ? (_showOnboarding ? 'onboarding' : 'main')
-              : (_showPreAuthWelcome
-                    ? 'welcome'
-                    : (_isShowingRegister ? 'register' : 'login')),
+              : (authProvider.isGuestMode
+                    ? 'guest_trial'
+                    : (_showPreAuthWelcome
+                          ? 'welcome'
+                          : (_isShowingRegister ? 'register' : 'login'))),
         ),
         child: currentPage,
       ),

@@ -18,6 +18,9 @@ const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 const POS_OPTIONS = ["noun", "verb", "adjective", "adverb", "pronoun", "preposition", "conjunction", "interjection"];
 const LEVEL_OPTIONS = ["A1", "A2", "B1", "B2", "C1", "C2"];
+const TOPIC_OPTIONS = ["general", "travel", "business", "daily", "science", "technology"];
+const QA_STATUS_OPTIONS = ["NEEDS_REVIEW", "VERIFIED", "UNREVIEWED"];
+const PAGE_SIZE = 100;
 
 const levelColor: Record<string, "info" | "success" | "warning" | "danger"> = {
   A1: "info",
@@ -28,12 +31,22 @@ const levelColor: Record<string, "info" | "success" | "warning" | "danger"> = {
   C2: "danger",
 };
 
+const qaTone: Record<string, "success" | "warning" | "neutral"> = {
+  VERIFIED: "success",
+  NEEDS_REVIEW: "warning",
+  UNREVIEWED: "neutral",
+};
+
 export const VocabularyPage = () => {
   const { t } = useI18n();
   const [items, setItems] = useState<VocabItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [levelFilter, setLevelFilter] = useState("");
+  const [topicFilter, setTopicFilter] = useState("");
+  const [qaFilter, setQaFilter] = useState("");
+  const [page, setPage] = useState(0);
 
   // Form
   const [showForm, setShowForm] = useState(false);
@@ -46,6 +59,9 @@ export const VocabularyPage = () => {
     part_of_speech: "noun",
     pronunciation: "",
     difficulty_level: "A1",
+    topics: ["general"] as string[],
+    qa_status: "NEEDS_REVIEW",
+    source_reference: "",
   });
 
   // Bulk import
@@ -54,15 +70,30 @@ export const VocabularyPage = () => {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const resetForm = () => {
-    setForm({ word: "", definition: "", translation: "", part_of_speech: "noun", pronunciation: "", difficulty_level: "A1" });
+    setForm({
+      word: "",
+      definition: "",
+      translation: "",
+      part_of_speech: "noun",
+      pronunciation: "",
+      difficulty_level: "A1",
+      topics: ["general"],
+      qa_status: "NEEDS_REVIEW",
+      source_reference: "",
+    });
     setEditingId(null);
   };
 
-  const loadItems = async () => {
+  const loadItems = async (targetPage = page) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await listVocabulary(100, 0);
+      const res = await listVocabulary(PAGE_SIZE, targetPage * PAGE_SIZE, {
+        search,
+        difficulty_level: levelFilter || undefined,
+        topic: topicFilter || undefined,
+        qa_status: qaFilter || undefined,
+      });
       setItems(res.data || []);
     } catch (err: any) {
       setError(err?.message || t.vocabulary.loadFailed);
@@ -71,7 +102,9 @@ export const VocabularyPage = () => {
     }
   };
 
-  useEffect(() => { void loadItems(); }, []);
+  useEffect(() => {
+    void loadItems(page);
+  }, [page, levelFilter, topicFilter, qaFilter]);
 
   const handleEdit = (item: VocabItem) => {
     setEditingId(item.id);
@@ -82,23 +115,45 @@ export const VocabularyPage = () => {
       part_of_speech: item.part_of_speech || "noun",
       pronunciation: item.pronunciation || "",
       difficulty_level: item.difficulty_level || "A1",
+      topics: item.topics && item.topics.length > 0 ? item.topics : ["general"],
+      qa_status: item.qa_status || "NEEDS_REVIEW",
+      source_reference: item.source_reference || "",
     });
     setShowForm(true);
+  };
+
+  const toggleFormTopic = (topic: string) => {
+    setForm((prev) => {
+      const exists = prev.topics.includes(topic);
+      const next = exists ? prev.topics.filter((x) => x !== topic) : [...prev.topics, topic];
+      return { ...prev, topics: next.length > 0 ? next : ["general"] };
+    });
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
+    const payload = {
+      word: form.word,
+      definition: form.definition,
+      translation: form.translation,
+      part_of_speech: form.part_of_speech,
+      pronunciation: form.pronunciation,
+      difficulty_level: form.difficulty_level,
+      topics: form.topics.join(","),
+      qa_status: form.qa_status,
+      source_reference: form.source_reference || undefined,
+    };
     try {
       if (editingId) {
-        await updateVocabulary(editingId, form);
+        await updateVocabulary(editingId, payload);
       } else {
-        await createVocabulary(form);
+        await createVocabulary(payload);
       }
       resetForm();
       setShowForm(false);
-      await loadItems();
+      await loadItems(page);
     } catch (err: any) {
       setError(err?.message || t.common.saveFailed);
     } finally {
@@ -142,7 +197,7 @@ export const VocabularyPage = () => {
   const handleExport = () => {
     downloadCSV(
       "vocabulary.csv",
-      ["word", "definition", "translation", "part_of_speech", "pronunciation", "difficulty_level"],
+      ["word", "definition", "translation", "part_of_speech", "pronunciation", "difficulty_level", "topics", "qa_status"],
       items.map((v) => [
         v.word,
         v.definition || "",
@@ -150,11 +205,13 @@ export const VocabularyPage = () => {
         v.part_of_speech,
         v.pronunciation || "",
         v.difficulty_level,
+        (v.topics || []).join(","),
+        v.qa_status || "UNREVIEWED",
       ])
     );
   };
 
-  // Client-side search filter
+  // Client-side search matches current page immediately; Enter or button queries backend across all rows
   const filtered = search
     ? items.filter(
         (v) =>
@@ -187,15 +244,51 @@ export const VocabularyPage = () => {
             placeholder={t.vocabulary.searchPlaceholder}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                setPage(0);
+                void loadItems(0);
+              }
+            }}
           />
+          <select
+            className="filter-select"
+            aria-label="Lọc cấp độ CEFR"
+            value={levelFilter}
+            onChange={(e) => { setPage(0); setLevelFilter(e.target.value); }}
+          >
+            <option value="">Tất cả CEFR</option>
+            {LEVEL_OPTIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <select
+            className="filter-select"
+            aria-label="Lọc chủ đề"
+            value={topicFilter}
+            onChange={(e) => { setPage(0); setTopicFilter(e.target.value); }}
+          >
+            <option value="">Tất cả chủ đề</option>
+            {TOPIC_OPTIONS.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
+          </select>
+          <select
+            className="filter-select"
+            aria-label="Lọc trạng thái QA"
+            value={qaFilter}
+            onChange={(e) => { setPage(0); setQaFilter(e.target.value); }}
+          >
+            <option value="">Tất cả QA</option>
+            {QA_STATUS_OPTIONS.map((qa) => <option key={qa} value={qa}>{qa}</option>)}
+          </select>
           <input type="file" accept=".csv,.pdf" ref={fileRef} onChange={handleBulkImport} style={{ display: "none" }} />
-          <button className="ghost-button" onClick={() => fileRef.current?.click()} disabled={importing}>
+          <button type="button" className="ghost-button" onClick={() => { setPage(0); void loadItems(0); }}>
+            Tìm
+          </button>
+          <button type="button" className="ghost-button" onClick={() => fileRef.current?.click()} disabled={importing}>
             {importing ? "Đang import..." : "Import CSV/PDF"}
           </button>
-          <button className="ghost-button" onClick={handleExport} disabled={items.length === 0}>
+          <button type="button" className="ghost-button" onClick={handleExport} disabled={items.length === 0}>
             Export CSV
           </button>
-          <button className="primary-button" onClick={() => { resetForm(); setShowForm(true); }}>
+          <button type="button" className="primary-button" onClick={() => { resetForm(); setShowForm(true); }}>
             {t.vocabulary.createWord}
           </button>
         </div>
@@ -246,11 +339,28 @@ export const VocabularyPage = () => {
                 align: "center",
               },
               {
+                header: "Chủ đề",
+                render: (row) => (
+                  <span className="table-meta">
+                    {row.topics && row.topics.length > 0 ? row.topics.join(", ") : "—"}
+                  </span>
+                ),
+                align: "center",
+              },
+              {
+                header: "QA",
+                render: (row) => {
+                  const status = row.qa_status || "UNREVIEWED";
+                  return <StatusPill tone={qaTone[status] || "neutral"} label={status} />;
+                },
+                align: "center",
+              },
+              {
                 header: t.common.actions,
                 render: (row) => (
                   <div className="table-actions">
-                    <button className="ghost-button small" onClick={() => handleEdit(row)}>{t.common.edit}</button>
-                    <button className="ghost-button small danger" onClick={() => handleDelete(row.id)}>{t.common.delete}</button>
+                    <button type="button" className="ghost-button small" onClick={() => handleEdit(row)}>{t.common.edit}</button>
+                    <button type="button" className="ghost-button small danger" onClick={() => handleDelete(row.id)}>{t.common.delete}</button>
                   </div>
                 ),
                 align: "right",
@@ -261,10 +371,22 @@ export const VocabularyPage = () => {
         )}
       </div>
 
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span className="table-meta">Trang {page + 1}</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" className="ghost-button small" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}>
+            Trước
+          </button>
+          <button type="button" className="ghost-button small" onClick={() => setPage((p) => p + 1)} disabled={items.length < PAGE_SIZE}>
+            Tiếp
+          </button>
+        </div>
+      </div>
+
       {/* Create/Edit Modal */}
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+        <div className="modal-overlay" role="dialog" aria-modal="true" onClick={() => setShowForm(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 540 }}>
             <h3>{editingId ? t.vocabulary.editWord : t.vocabulary.createNew}</h3>
             <form className="form" onSubmit={handleSave}>
               <label>
@@ -295,6 +417,41 @@ export const VocabularyPage = () => {
                   <select value={form.difficulty_level} onChange={(e) => setForm({ ...form, difficulty_level: e.target.value })}>
                     {LEVEL_OPTIONS.map((l) => <option key={l} value={l}>{l}</option>)}
                   </select>
+                </label>
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Chủ đề (tối thiểu 1)</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {TOPIC_OPTIONS.map((topic) => {
+                    const active = form.topics.includes(topic);
+                    return (
+                      <button
+                        key={topic}
+                        type="button"
+                        className={active ? "primary-button small" : "ghost-button small"}
+                        onClick={() => toggleFormTopic(topic)}
+                      >
+                        {topic}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="form-row">
+                <label>
+                  Trạng thái QA
+                  <select value={form.qa_status} onChange={(e) => setForm({ ...form, qa_status: e.target.value })}>
+                    <option value="NEEDS_REVIEW">NEEDS_REVIEW</option>
+                    <option value="VERIFIED">VERIFIED (yêu cầu nguồn)</option>
+                  </select>
+                </label>
+                <label>
+                  Nguồn tham chiếu (Oxford / Cambridge...)
+                  <input
+                    value={form.source_reference}
+                    onChange={(e) => setForm({ ...form, source_reference: e.target.value })}
+                    placeholder="Cambridge Dictionary..."
+                  />
                 </label>
               </div>
               <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

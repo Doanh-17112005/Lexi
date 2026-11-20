@@ -521,6 +521,56 @@ class _GrammarQuizScreenState extends State<GrammarQuizScreen> {
               children: [
                 Column(
                   children: [
+                    // 3-tier difficulty selector (Dễ / Trung bình / Khó)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (final entry in const [
+                            ('easy', 'Dễ'),
+                            ('medium', 'Trung bình'),
+                            ('hard', 'Khó'),
+                          ])
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
+                              child: ChoiceChip(
+                                label: Text(entry.$2),
+                                selected:
+                                    (game.difficultyTier == entry.$1) ||
+                                    (game.difficultyTier == 'mixed' &&
+                                        provider.selectedGrammarDifficulty ==
+                                            entry.$1),
+                                onSelected: (selected) async {
+                                  if (!selected ||
+                                      game.difficultyTier == entry.$1) {
+                                    return;
+                                  }
+                                  _timer?.cancel();
+                                  _questionIndex = 0;
+                                  _correctCount = 0;
+                                  _selectedIndex = null;
+                                  _answered = false;
+                                  _gameLoaded = false;
+                                  _restoredSession = false;
+                                  _submittedAnswers.clear();
+                                  _selectedIndices.clear();
+                                  _chosenAnswers.clear();
+                                  _answerCorrectness.clear();
+                                  _explanationDetails.clear();
+                                  _answeredIndices.clear();
+                                  await provider.loadGrammarQuiz(
+                                    difficulty: entry.$1,
+                                  );
+                                  if (mounted) _loadCurrentQuestion();
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
                     // Question progress dots
                     Padding(
                       padding: const EdgeInsets.only(top: 8, bottom: 6),

@@ -30,13 +30,19 @@ import {
 
 const makeId = () => `ex_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
-const defaultExercise = (uiType: UiType, index: number): Exercise => ({
+export const defaultExercise = (uiType: UiType, _index: number): Exercise => ({
   id: makeId(),
   type: UI_TYPE_TO_TYPE[uiType],
   ui_type: uiType,
   question: "",
-  options: null,
-  correct_answer: "",
+  options:
+    uiType === "true_or_false"
+      ? [
+          { id: "0", text: "True", is_correct: false },
+          { id: "1", text: "False", is_correct: true },
+        ]
+      : null,
+  correct_answer: uiType === "true_or_false" ? "False" : "",
   explanation: null,
   hint: null,
   audio_url: null,

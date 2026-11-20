@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.core.cefr_vocabulary_data import CEFR_VOCABULARY as CURATED_CEFR_VOCABULARY
+from app.core.cefr_vocabulary_data import (
+    CEFR_VOCABULARY as CURATED_CEFR_VOCABULARY,
+    build_cefr_seed_tags,
+)
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.course import Course, Lesson, Unit
@@ -14,6 +17,7 @@ from app.models.course_category import CourseCategory
 from app.models.progress import UserCourseProgress
 from app.models.user import User
 from app.models.vocabulary import DifficultyLevel, PartOfSpeech, VocabularyItem
+from app.services.vocabulary_catalog_policy import normalize_topic_tags
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -257,6 +261,7 @@ async def seed_and_test(*, user_email=None, publish=False):
                     "pronunciation": vocab["phonetic"],
                     "definition": vocab["definition"],
                     "example": vocab["example"],
+                    "topic": vocab["topic"],
                     "provenance_type": vocab["provenance_type"],
                     "source_reference": vocab["source_reference"],
                     "qa_status": vocab["qa_status"],
@@ -378,11 +383,7 @@ async def seed_and_test(*, user_email=None, publish=False):
                     pronunciation=v["phonetic"],
                     difficulty_level=getattr(DifficultyLevel, v["level"]),
                     part_of_speech=getattr(PartOfSpeech, v["part_of_speech"].upper()),
-                    tags={
-                        "source": v["provenance_type"],
-                        "source_reference": v["source_reference"],
-                        "qa_status": v["qa_status"],
-                    },
+                    tags=build_cefr_seed_tags(v),
                 )
                 db.add(v_item)
                 vocab_added += 1
@@ -395,13 +396,21 @@ async def seed_and_test(*, user_email=None, publish=False):
                         "vi": v["meaning"],
                         "examples": [v["example"]],
                     }
-                existing_tags = (
-                    dict(existing_item.tags) if isinstance(existing_item.tags, dict) else {}
-                )
-                existing_tags.setdefault("source", v["provenance_type"])
-                existing_tags.setdefault("source_reference", v["source_reference"])
-                existing_tags.setdefault("qa_status", v["qa_status"])
-                existing_item.tags = existing_tags
+                if isinstance(existing_item.tags, dict):
+                    existing_tags = dict(existing_item.tags)
+                    existing_tags.setdefault("source", v["provenance_type"])
+                    existing_tags.setdefault("source_reference", v["source_reference"])
+                    existing_tags.setdefault("qa_status", v["qa_status"])
+                    if not normalize_topic_tags(existing_tags):
+                        existing_tags["topic"] = [v["topic"]]
+                    existing_item.tags = existing_tags
+                elif isinstance(existing_item.tags, list):
+                    updated_list = list(existing_item.tags)
+                    if not normalize_topic_tags(updated_list):
+                        updated_list.append(v["topic"])
+                    existing_item.tags = updated_list
+                else:
+                    existing_item.tags = build_cefr_seed_tags(v)
         await db.commit()
         print(
             f"    -> Đã nạp {vocab_added} từ vựng mới A1 -> C2; "

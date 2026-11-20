@@ -314,9 +314,8 @@ async def calculate_challenge_progress(
 ) -> int:
     """Calculate current progress for a challenge."""
     
-    local_tz = datetime.now().astimezone().tzinfo
-    today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=local_tz)
-    today_end = datetime.combine(today + timedelta(days=1), datetime.min.time()).replace(tzinfo=local_tz)
+    today_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+    today_end = datetime.combine(today + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     
     if challenge["category"] == "lesson":
         if challenge["id"] == "complete_lessons":
@@ -513,12 +512,11 @@ async def get_daily_challenges(
     - XP reward upon completion
     - Expiration time (end of day)
     """
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     challenges = get_challenges_for_user(current_user.id, today)
     
     # Get claimed challenges for today
-    local_tz = datetime.now().astimezone().tzinfo
-    today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=local_tz)
+    today_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
     claims_result = await db.execute(
         select(ChallengeRewardClaim.challenge_id).where(
             and_(
@@ -593,9 +591,8 @@ async def claim_daily_bonus(
     """
     from app.services.item_effects_service import ItemEffectsService
 
-    today = date.today()
-    local_tz = datetime.now().astimezone().tzinfo
-    today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=local_tz)
+    today = datetime.now(timezone.utc).date()
+    today_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
     challenges = get_challenges_for_user(current_user.id, today)
 
     # Check if bonus already claimed
@@ -730,9 +727,8 @@ async def claim_challenge_reward(
     """
     from app.services.item_effects_service import ItemEffectsService
     
-    today = date.today()
-    local_tz = datetime.now().astimezone().tzinfo
-    today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=local_tz)
+    today = datetime.now(timezone.utc).date()
+    today_start = datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
     challenges = get_challenges_for_user(current_user.id, today)
     
     # Find the challenge
@@ -842,8 +838,15 @@ async def claim_challenge_reward(
     
     # --- Check achievements after claiming challenge ---
     from app.services import check_achievements_for_user
-    await check_achievements_for_user(db, current_user.id, "daily_challenge")
-    await check_achievements_for_user(db, current_user.id, "xp_earned")
+    unlocked_challenge = await check_achievements_for_user(
+        db, current_user.id, "daily_challenge"
+    )
+    unlocked_xp = await check_achievements_for_user(db, current_user.id, "xp_earned")
+    if unlocked_challenge or unlocked_xp:
+        await db.commit()
+        from app.core.cache import build_cache_key, delete_cached
+        await delete_cached(build_cache_key("achievements_me", user_id=str(current_user.id)))
+        await delete_cached(build_cache_key("wallet", user_id=str(current_user.id)))
     
     message = f"Challenge completed! +{boosted_xp} XP"
     if multiplier > 1.0:

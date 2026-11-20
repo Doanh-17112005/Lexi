@@ -12,7 +12,11 @@ export const getAdminLoginErrorMessage = (error: unknown): string => {
   if (status === 403 && normalized.includes("inactive")) {
     return "Tài khoản đã bị vô hiệu hóa.";
   }
-  if (status === 403) {
+  if (
+    status === 403 ||
+    normalized.includes("quyền truy cập") ||
+    normalized.includes("admin privileges")
+  ) {
     return "Tài khoản không có quyền truy cập Admin Dashboard.";
   }
   if (status === 503) {

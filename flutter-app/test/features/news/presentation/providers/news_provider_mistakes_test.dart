@@ -34,7 +34,10 @@ void main() {
           mistakeRepository: repository,
         );
 
-        await provider.loadQuiz('article-123');
+        await provider.loadQuiz(
+          'article-123',
+          article: const NewsArticle(id: 'article-123', title: ''),
+        );
         provider.answerQuestion(1, 0);
         provider.submitQuiz();
         await Future<void>.delayed(Duration.zero);

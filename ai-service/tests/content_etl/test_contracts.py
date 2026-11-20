@@ -5,6 +5,19 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_env(monkeypatch):
+    """Prevent dotenv leaks from earlier test imports (e.g. api.main) from polluting Settings(_env_file=None)."""
+    for key in (
+        "ALLOWED_ORIGINS",
+        "CORS_ORIGINS",
+        "CORS_ALLOW_ORIGIN_REGEX",
+        "LEARNER_STATE_MODE",
+        "MONGODB_TLS_ALLOW_INVALID_CERTIFICATES",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
 from api.core.config import Settings
 from api.services.content_etl.contracts import (
     AllowedLicenseId,

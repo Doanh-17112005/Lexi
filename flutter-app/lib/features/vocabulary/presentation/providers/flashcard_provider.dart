@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:lexilingo_app/core/services/analytics_service.dart';
+import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_tags.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/review_session_entity.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/user_vocabulary_entity.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/usecases/get_due_vocabulary_usecase.dart';
@@ -173,8 +174,9 @@ class FlashcardProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final canonicalTag = normalizeVocabularyTopic(tag) ?? tag;
       final itemsResult = await vocabularyRepository.getVocabularyItems(
-        tag: tag,
+        tag: canonicalTag,
         limit: limit,
       );
 
@@ -327,20 +329,30 @@ class FlashcardProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  final Map<int, String> _attemptIdempotencyKeys = {};
+
   /// Submit review for current card
   Future<void> submitReview(ReviewQuality quality) async {
-    if (_currentSession == null) return;
+    if (_isLoading || _currentSession == null) return;
 
+    final cardIndex = _currentSession!.reviewedCards;
     final currentCard = _currentSession!.currentCard;
     if (currentCard == null) return;
 
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
       final timeSpentMs = _cardStartTime != null
           ? DateTime.now().difference(_cardStartTime!).inMilliseconds
           : null;
+
+      final idempotencyKey = _attemptIdempotencyKeys.putIfAbsent(
+        cardIndex,
+        () =>
+            'fc_${currentCard.userVocabulary.id}_${cardIndex}_${_currentSession!.startedAt.millisecondsSinceEpoch}',
+      );
 
       final tags = currentCard.vocabularyItem.tags;
       trackContentInteraction(
@@ -357,6 +369,7 @@ class FlashcardProvider extends ChangeNotifier {
           userVocabularyId: currentCard.userVocabulary.id,
           quality: quality,
           timeSpentMs: timeSpentMs,
+          idempotencyKey: idempotencyKey,
         ),
       );
 
@@ -367,6 +380,7 @@ class FlashcardProvider extends ChangeNotifier {
           notifyListeners();
         },
         (reviewResult) {
+          _attemptIdempotencyKeys.remove(cardIndex);
           final newReviewedCount = _currentSession!.reviewedCards + 1;
           final newCorrectCount =
               _currentSession!.correctCount + (quality.isCorrect ? 1 : 0);
@@ -407,6 +421,7 @@ class FlashcardProvider extends ChangeNotifier {
   /// End current session
   void endSession() {
     _resetLazyState();
+    _attemptIdempotencyKeys.clear();
     _currentSession = null;
     _isCardFlipped = false;
     _cardStartTime = null;

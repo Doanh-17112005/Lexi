@@ -32,6 +32,24 @@ class _VocabWordDetailSheetState extends State<_VocabWordDetailSheet>
   late final AnimationController _ctrl;
   late final Animation<double> _anim;
   bool _showBack = false;
+  bool _isSavingToCollection = false;
+
+  VocabProvider? _maybeVocabProvider(BuildContext context, {bool listen = false}) {
+    try {
+      return Provider.of<VocabProvider>(context, listen: listen);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  VocabWord _resolvedWord(VocabProvider? provider) {
+    if (provider == null) return widget.word;
+    final key = widget.word.word.trim().toLowerCase();
+    for (final w in provider.words) {
+      if (w.word.trim().toLowerCase() == key) return w;
+    }
+    return widget.word;
+  }
 
   @override
   void initState() {
@@ -189,15 +207,57 @@ class _VocabWordDetailSheetState extends State<_VocabWordDetailSheet>
                         ],
                       ),
 
-                      if (widget.word.userVocabularyId != null) ...[
-                        const SizedBox(height: 12),
-                        _ActionButton(
-                          icon: Icons.bookmark_add_outlined,
-                          label: 'vocabulary.addToDeck'.tr(),
-                          onTap: () => _showAddToDeckOptions(context),
-                          color: AppColors.primary,
-                        ),
-                      ],
+                      const SizedBox(height: 12),
+                      Builder(
+                        builder: (context) {
+                          final vocabProvider = _maybeVocabProvider(context, listen: true);
+                          final resolvedWord = _resolvedWord(vocabProvider);
+                          final userVocabId = resolvedWord.userVocabularyId;
+
+                          if (userVocabId != null && userVocabId.isNotEmpty) {
+                            return _ActionButton(
+                              icon: Icons.bookmark_add_outlined,
+                              label: 'vocabulary.addToDeck'.tr(),
+                              onTap: () => _showAddToDeckOptions(context, userVocabId),
+                              color: AppColors.primary,
+                            );
+                          }
+
+                          if (vocabProvider == null) {
+                            return const SizedBox.shrink();
+                          }
+
+                          return _ActionButton(
+                            icon: _isSavingToCollection
+                                ? Icons.hourglass_top
+                                : Icons.bookmark_border_rounded,
+                            label: 'vocabulary.saveWord'.tr(),
+                            onTap: _isSavingToCollection
+                                ? () {}
+                                : () async {
+                                    setState(() => _isSavingToCollection = true);
+                                    final ok = await vocabProvider.saveToCollection(resolvedWord);
+                                    if (!context.mounted) return;
+                                    setState(() => _isSavingToCollection = false);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          ok
+                                              ? 'vocabulary.addedToFlashcards'.tr(
+                                                  namedArgs: {
+                                                    'word': resolvedWord.word,
+                                                  },
+                                                )
+                                              : (vocabProvider.errorMessage ??
+                                                  'vocabulary.saveWordFailed'.tr()),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                            color: AppColors.greenSuccessBright,
+                          );
+                        },
+                      ),
                       const SizedBox(height: 32),
                     ],
                   ),
@@ -210,11 +270,9 @@ class _VocabWordDetailSheetState extends State<_VocabWordDetailSheet>
     );
   }
 
-  void _showAddToDeckOptions(BuildContext context) {
+  void _showAddToDeckOptions(BuildContext context, String userVocabId) {
     final vocabProvider = Provider.of<VocabProvider>(context, listen: false);
-    final userVocabId = widget.word.userVocabularyId;
-
-    if (userVocabId == null) {
+    if (userVocabId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('vocabulary.addWordFirst'.tr())),
       );

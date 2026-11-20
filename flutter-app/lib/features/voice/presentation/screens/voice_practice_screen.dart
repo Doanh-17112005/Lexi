@@ -157,7 +157,14 @@ class _VoicePracticeScreenState extends State<VoicePracticeScreen> {
         }
       });
     } catch (e) {
-      _showError('voice.failedToStartRecording'.tr(namedArgs: {'error': '$e'}));
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('notallowed') ||
+          msg.contains('permission') ||
+          msg.contains('denied')) {
+        _showError('voice.microphonePermissionDenied'.tr());
+      } else {
+        _showError('voice.failedToStartRecording'.tr(namedArgs: {'error': '$e'}));
+      }
     }
   }
 
@@ -253,9 +260,14 @@ class _VoicePracticeScreenState extends State<VoicePracticeScreen> {
     if (result != null && result.audioData.isNotEmpty) {
       try {
         if (kIsWeb) {
+          final isWav = result.audioData.length >= 4 &&
+              result.audioData[0] == 0x52 &&
+              result.audioData[1] == 0x49 &&
+              result.audioData[2] == 0x46 &&
+              result.audioData[3] == 0x46;
           final audioUri = Uri.dataFromBytes(
             result.audioData,
-            mimeType: 'audio/wav',
+            mimeType: isWav ? 'audio/wav' : 'audio/mpeg',
           ).toString();
           await _player.setUrl(audioUri);
         } else {
@@ -278,8 +290,12 @@ class _VoicePracticeScreenState extends State<VoicePracticeScreen> {
         _showError('voice.failedToPlayAudio'.tr(namedArgs: {'error': '$e'}));
       }
     } else {
+      final errMsg = provider.errorMessage;
       provider.resetState();
       setState(() => _isPreparingExample = false);
+      if (errMsg != null && errMsg.isNotEmpty) {
+        _showError(errMsg);
+      }
     }
   }
 

@@ -9,6 +9,7 @@ import 'package:lexilingo_app/features/learning/domain/usecases/complete_lesson_
 import 'package:lexilingo_app/features/learning/domain/usecases/get_course_roadmap_usecase.dart';
 import 'package:lexilingo_app/features/learning/domain/usecases/get_lesson_content_usecase.dart';
 import 'package:lexilingo_app/features/learning/presentation/providers/learning_provider.dart';
+import 'package:lexilingo_app/features/mistakes/data/mistake_notebook_repository.dart';
 
 /// Register Learning module dependencies
 void registerLearningModule() {
@@ -49,6 +50,9 @@ void registerLearningModule() {
       completeLessonUseCase: sl<CompleteLessonUseCase>(),
       getCourseRoadmapUseCase: sl<GetCourseRoadmapUseCase>(),
       getLessonContentUseCase: sl<GetLessonContentUseCase>(),
+      onTheoryViewed: (lessonId) =>
+          sl<LearningRepository>().markTheoryViewed(lessonId),
+      mistakeRepository: const MistakeNotebookRepository(),
     ),
   );
 }

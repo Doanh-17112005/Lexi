@@ -223,6 +223,8 @@ async def check_all_achievements(
     
     checker = AchievementCheckerService(db)
     unlocked = await checker.check_all(current_user.id)
+    if unlocked:
+        await db.commit()
     
     response_data = [
         {

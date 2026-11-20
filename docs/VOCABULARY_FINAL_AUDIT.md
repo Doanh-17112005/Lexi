@@ -1,7 +1,8 @@
 # Vocabulary QA Final Audit
 
-- Ngày tổng hợp: 2026-11-12.
-- Phạm vi: tổng hợp 180/180 mục từ bằng chứng đã lưu trong `docs/VOCABULARY_QA.md`; không tra cứu lại từng từ, không sửa seed và không chạy full test.
+- Ngày tổng hợp ban đầu: 2026-11-12; cập nhật tái đối chứng nguồn trực tiếp: **2026-11-19** (xem mục cuối).
+- Trạng thái tổng hợp hiện hành (2026-11-19): **180 mục** (`88 CONFIRMED_SOURCE` / `66 CONFLICT` / `26 BLOCKED`), **180/180 `AI_GENERATED + NEEDS_REVIEW`**, **0 `VERIFIED`** (`source_reference=None`).
+- Phạm vi: tổng hợp 180/180 mục từ bằng chứng đã lưu trong `docs/VOCABULARY_QA.md` và tái kiểm chứng trực tiếp bằng `Oxford 3000/5000 PDF` cùng trang nghĩa `Oxford Learner's Dictionaries` ngày 2026-11-19.
 - Cách phân loại: `CONFIRMED_SOURCE` nghĩa là bằng chứng đã lưu hỗ trợ đúng nghĩa/cách dùng và cấp mục tiêu; `CONFLICT` là nguồn Cambridge/Oxford (hoặc EVP được ghi rõ) cho cấp khác nhau; `BLOCKED` là chưa có nguồn trực tiếp đủ mạnh để xác nhận CEFR theo nghĩa. Cả ba nhóm vẫn là `NEEDS_REVIEW`, không đồng nghĩa `VERIFIED`.
 - Khi Cambridge xác nhận nghĩa còn Oxford chỉ gắn cấp headword/từ loại, chênh lệch vẫn được giữ là `CONFLICT`; không dùng nhãn headword để tự quyết định cấp của mọi nghĩa.
 
@@ -199,3 +200,88 @@ PASS kỹ thuật chỉ xác nhận cấu trúc/catalog và policy trạng thái
 ## 7. Tiêu chí nghiệm thu nội dung
 
 Một mục chỉ đủ điều kiện đề nghị duyệt khi đồng thời có: (a) headword/chính tả/từ loại đúng; (b) definition, nghĩa Việt và ví dụ cùng một nghĩa; (c) nguồn truy cập được gắn CEFR trực tiếp cho nghĩa/cách dùng đó, hoặc quyết định biên tập được phê duyệt khi nguồn bất đồng; (d) URL, ngày truy cập và hạn chế được lưu; (e) kiểm tra không trùng và đủ 30 mục/cấp vẫn PASS; (f) một biên tập viên độc lập xác nhận. Cho tới khi đáp ứng đầy đủ, giữ `AI_GENERATED + NEEDS_REVIEW` và không gán `VERIFIED`.
+
+
+---
+
+## Cập nhật đối chứng & Tích hợp Hệ thống Học tập — 2026-11-18
+
+### 1. Rà soát bổ sung nguồn `CONFLICT` & `BLOCKED` (giữ nguyên `AI_GENERATED + NEEDS_REVIEW`)
+
+- **Phân tách nhóm `66 CONFLICT`** theo cấu trúc đối chiếu `Oxford 3000/5000` (cấp headword/POS) và `Cambridge Dictionary / EVP` (cấp theo từng nghĩa):
+  - **Nhóm lệch chuẩn cấp headword vs nghĩa cụ thể (`45` mục — `CONFIRMED_SENSE_LEVEL_DIVERGENCE`)**: Nghĩa đang dạy trong seed khớp cấp mục tiêu ở một nguồn chuẩn (ví dụ A2 `friendly`, `healthy`, `quickly`, `during`, `without`, `explain` [14 mục]; toàn bộ `21/21` mục B1 như `opportunity`, `achieve`, `decision`, `realise`, `recommend`; B2 `consequence`, `evidence`, `factor`, `impact`, `policy` [5 mục]; C1 `comprehensive`, `implication`, `innovation`, `phenomenon`, `reinforce` [5 mục]), còn nguồn kia chỉ gắn nhãn tổng quát ở cấp khác.
+  - **Nhóm chênh lệch thực chất giữa nguồn ưu tiên (`21` mục — `CONFLICT_UNRESOLVED`)**: A2 (`suddenly`, `promise` — `2` mục), B2 (`acknowledge`, `assumption`, `controversy`, `criterion`, `perspective`, `principle`, `substantial`, `tendency`, `clarify`, `negotiate` — `10` mục), C1 (`constraint`, `integrity`, `resilience`, `scrutiny`, `viable`, `profound`, `formulate`, `undermine`, `advocate` — `9` mục). Xác minh lại qua `English Vocabulary Profile` / `Cambridge` ghi nhận các từ như `promise` (Cambridge B1 vs Oxford A2), `acknowledge` (C1 vs Oxford B2), `criterion` (C1 vs Oxford B2), `controversy` (C1 vs Oxford B2), `clarify` (C1 vs Oxford B2) có khác biệt thực giữa hai khung chuẩn, nên giữ nguyên dữ liệu hiện có và tiếp tục `NEEDS_REVIEW` cho vòng editorial QA.
+- **Nhóm `33 BLOCKED` (`4` C1 + `29` C2 — `BLOCKED_SOURCE`)**:
+  - Tra cứu bổ sung `articulate`, `rationale`, `synthesis`, `nuanced` (C1) và lô mẫu C2 (`ubiquitous`, `serendipity`, `acquiesce`, `capricious`, `conundrum`, `meticulous`, `elucidate`, `deleterious`, `tenuous`, `idiosyncratic`) qua Cambridge Dictionary và chỉ mục EVP xác nhận chính tả, từ loại và nghĩa học thuật C1/C2 là chính xác; tuy nhiên trang Cambridge/EVP trực tiếp vẫn không gắn nhãn badge `C2` đồng loạt cho C2 headwords, nên tiếp tục giữ trạng thái `BLOCKED_SOURCE` và **`AI_GENERATED + NEEDS_REVIEW`** (`source_reference=None`). Không tự chuyển `VERIFIED`.
+
+### 2. Nâng cấp Multi-Topic Taxonomy & Seed An toàn
+
+- **`backend-service/app/core/cefr_vocabulary_data.py`**: Bổ sung `_WORD_MULTI_TOPICS` và `get_word_topics()` cho các từ liên ngành tự nhiên (ví dụ `airport`: `travel` + `business`, `work`: `business` + `daily`, `innovation`: `technology` + `business`, `serendipity`: `science` + `general`). `build_cefr_seed_tags()` xuất `"topic": list(topics)` chuẩn canonical (`general`, `travel`, `business`, `daily`, `science`, `technology`) và `validate_cefr_vocabulary()` kiểm tra nghiêm cả chủ đề chính lẫn phụ.
+- **`backend-service/scripts/seed_cefr_vocabulary.py`**: Script upsert từ vựng idempotent chuyên biệt, mặc định `--target test --dry-run`:
+  - Kiểm chứng `--target local --dry-run` (rolled back trên PostgreSQL chính `lexilingo`): `selected=180, created=169, updated=11, unchanged=0, preserved_non_cefr=4, total_rows_after_flush=184` — **chưa ghi lên DB chính**.
+  - Kiểm chứng `--target test --apply` 2 lần liên tiếp trên `lexilingo_test`: Run 1 `created=180, updated=0`, Run 2 `created=0, updated=0, unchanged=180`; `--only-verified --dry-run` chọn `0` mục vì 100% vẫn đang `NEEDS_REVIEW`.
+
+### 3. Hoàn thiện Tích hợp Học tập trên Flutter & Kiểm thử
+
+- **`VocabWord.vocabularyId` & Save to Collection**: `VocabProvider` nay map `vocabularyId` từ `GET /vocabulary/items` và `GET /vocabulary/collection`, bảo toàn qua `_mergeWord()`, bổ sung `saveToCollection()` (chống tạo trùng bằng `userVocabularyId` và gọi `/vocabulary/collection`), và mở nút `Lưu từ` trực tiếp trong `VocabWordDetailSheet`.
+- **Flashcard SRS 4 mức (`Again / Hard / Good / Easy`)**: `ReviewQualityButtons` hiển thị đủ 4 mức đánh giá chuẩn SM-2/SRS (`incorrect(1)`, `hard(2)`, `good(3)`, `easy(4)`).
+- **Vocabulary Quiz -> Mistake Notebook**: `QuizProvider` được nối optional `MistakeNotebookRepository` (qua `vocabulary_di.dart`) để tự động lưu câu trả lời sai vào sổ tay ôn lỗi (`sourceType: 'vocabulary_quiz'`).
+- **Kết quả chạy test mới nhất**:
+  - Backend pytest (`6` files, gồm `test_cefr_vocabulary_safe_seed_and_srs_uat.py`): `127 passed`; Ruff: `0` lỗi.
+  - Flutter `flutter analyze lib/features/vocabulary`: `No issues found`; `flutter test` cụm presentation/models/datasource: `34 passed` (lưu ý khi chạy toàn bộ `test/features/vocabulary` có `1` fail tồn tại sẵn từ trước ở `vocabulary_word_of_day_test.dart:69` do normalize lowercase `'AWL'` -> `'awl'`).
+  - Chrome Live UAT trên `:5174` sau bản vá: **CHƯA KIỂM THỬ** (server đang tắt và DB chính chưa được duyệt nạp `180` từ).
+
+---
+
+## Cập nhật Đối chứng Nguồn Trực tiếp & Selective Seed — 2026-11-19
+
+### 1. Nguồn truy cập thực tế và phương pháp tái kiểm chứng
+- **Nguồn mở trực tiếp HTTP 200 ngày 2026-11-19**:
+  - [Oxford 3000 PDF](https://www.oxfordlearnersdictionaries.com/external/pdf/wordlists/oxford-3000-5000/The_Oxford_3000.pdf) và [Oxford 5000 PDF](https://www.oxfordlearnersdictionaries.com/external/pdf/wordlists/oxford-3000-5000/The_Oxford_5000.pdf): đối chiếu toàn bộ 180/180 headword và từ loại.
+  - Các trang nghĩa trực tiếp `https://www.oxfordlearnersdictionaries.com/definition/english/<headword>` (kiểm chứng trực tiếp thuộc tính `cefr`, `fkcefr` và badge chủ đề `topic_cefr` theo từng nghĩa).
+- **Giới hạn truy cập giữ nguyên**:
+  - `dictionary.cambridge.org` vẫn trả HTTP 403 khi mở trực tiếp; [English Vocabulary Profile Online](https://englishprofile.org/?menu=evp-online) trả HTTP 200 nhưng là ứng dụng động SPA không có permalink theo từ.
+  - Không dùng suy diễn từ độ khó hay sự vắng mặt trong Oxford 5000 để gán C2, và không dùng kết quả tóm tắt tìm kiếm thiếu nhãn gốc để tự phong `VERIFIED`.
+- **Trạng thái provenance & QA**: Toàn bộ **180/180** mục vẫn giữ **`AI_GENERATED` + `NEEDS_REVIEW`** (`source_reference=None`, **`0 VERIFIED`**). Không sửa hoặc thay headword khi chưa có lỗi nội dung được chứng minh.
+
+### 2. Bảng tổng hợp cập nhật (2026-11-19)
+
+| CEFR | Tổng mục | `CONFIRMED_SOURCE` | `CONFLICT` | `BLOCKED` | `AI_GENERATED + NEEDS_REVIEW` | `VERIFIED` |
+|---|---:|---:|---:|---:|---:|---:|
+| A1 | 30 | 30 | 0 | 0 | 30 | 0 |
+| A2 | 30 | 13 | 17 | 0 | 30 | 0 |
+| B1 | 30 | 11 | 19 | 0 | 30 | 0 |
+| B2 | 30 | 15 | 15 | 0 | 30 | 0 |
+| C1 | 30 | 13 | 15 | 2 | 30 | 0 |
+| C2 | 30 | 6 | 0 | 24 | 30 | 0 |
+| **Tổng** | **180** | **88** | **66** | **26** | **180** | **0** |
+
+### 3. Chi tiết các thay đổi phân loại so với 2026-11-12 (`81 / 66 / 33` -> `88 / 66 / 26`)
+1. **Giải quyết `CONFLICT -> CONFIRMED_SOURCE` (+2 B1)**:
+   - [`independent`](https://www.oxfordlearnersdictionaries.com/definition/english/independent_1) (B1, adjective): Oxford PDF chỉ in nhãn thấp nhất `A2` (nghĩa chính trị/quốc gia độc lập), nhưng trang nghĩa trực tiếp của Oxford gắn `cefr="b1"` cho đúng nghĩa 2 (“confident and free to do things without needing help from other people”), đồng thuận với Cambridge `B1`.
+   - [`manage`](https://www.oxfordlearnersdictionaries.com/definition/english/manage) (B1, verb): Oxford PDF in `A2` (nghĩa quản lý công việc/tổ chức), nhưng trang nghĩa trực tiếp của Oxford gắn `cefr="b1"` cho đúng nghĩa 2 (“to succeed in doing something, especially something difficult”), đồng thuận với Cambridge `B1`.
+2. **Giải quyết `BLOCKED -> CONFIRMED_SOURCE` (+2 C1, +5 C2)**:
+   - C1 [`articulate`](https://www.oxfordlearnersdictionaries.com/definition/english/articulate_2) (adjective): trang nghĩa tính từ của Oxford gắn trực tiếp `cefr="c1"` (`topic_cefr=c1`) cho đúng nghĩa “good at expressing ideas or feelings clearly in words” (Oxford 5000 PDF trước đó chỉ liệt kê `articulate v. C1`).
+   - C1 [`synthesis`](https://www.oxfordlearnersdictionaries.com/definition/english/synthesis) (noun): trang nghĩa Oxford gắn trực tiếp `cefr="c1"` (`topic_cefr=c1`) cho nghĩa 1 (“the act of combining separate ideas, beliefs, styles, etc.”).
+   - C2 [`acquiesce`](https://www.oxfordlearnersdictionaries.com/definition/english/acquiesce) (verb): Oxford gắn trực tiếp `fkcefr="c2"` (`topic_cefr=c2`).
+   - C2 [`apocryphal`](https://www.oxfordlearnersdictionaries.com/definition/english/apocryphal) (adjective): Oxford gắn trực tiếp `fkcefr="c2"` (`topic_cefr=c2`).
+   - C2 [`intransigent`](https://www.oxfordlearnersdictionaries.com/definition/english/intransigent) (adjective): Oxford gắn trực tiếp `fkcefr="c2"` (`topic_cefr=c2`).
+   - C2 [`magnanimous`](https://www.oxfordlearnersdictionaries.com/definition/english/magnanimous) (adjective): Oxford gắn trực tiếp `fkcefr="c2"` (`topic_cefr=c2`).
+   - C2 [`zeitgeist`](https://www.oxfordlearnersdictionaries.com/definition/english/zeitgeist) (noun): Oxford gắn trực tiếp `fkcefr="c2"` (`topic_cefr=c2`).
+3. **Phát hiện lệch chuẩn bị sót trong đối chứng cũ (`CONFIRMED_SOURCE -> CONFLICT`, +1 A2, +1 C1)**:
+   - A2 [`airport`](https://www.oxfordlearnersdictionaries.com/definition/english/airport) (noun): Cả `The_Oxford_3000.pdf` và trang nghĩa Oxford đều xếp `airport n. A1` (báo cáo cũ từng ghi nhầm `A2`), trong khi Cambridge xếp `A2` -> chuyển sang `CONFLICT`.
+   - C1 [`insight`](https://www.oxfordlearnersdictionaries.com/definition/english/insight) (noun): `The_Oxford_3000.pdf` và trang nghĩa Oxford đều xếp `insight n. B2` (báo cáo cũ chỉ tra Oxford 5000 PDF), trong khi Cambridge xếp `C1` -> chuyển sang `CONFLICT`.
+4. **Các mục giữ nguyên trạng thái chưa chốt (`66 CONFLICT`, `26 BLOCKED`)**:
+   - **`CONFLICT` (`66` mục)**: A2 (`17`: 15 lệch headword A1 vs nghĩa A2 gồm `airport`, + `suddenly`, `promise`), B1 (`19`: lệch headword A1/A2 vs nghĩa B1), B2 (`15`: 5 Cambridge B2 vs Oxford A2/B1; 10 Cambridge C1/Oxford B2 hoặc ngược lại ở `substantial`), C1 (`15`: 6 Cambridge C1 vs Oxford B2 gồm `insight`; 9 Cambridge C2 vs Oxford C1).
+   - **`BLOCKED` (`26` mục)**: C1 (`2`: `rationale`, `nuanced` không có nhãn CEFR ở cả Oxford lẫn Cambridge) và C2 (`24`: `ubiquitous`, `serendipity`, `anachronism` [nghĩa 1 không gắn nhãn; chỉ nghĩa 2 trong sách/kịch có `c2`], `capricious`, `conundrum`, `dichotomy`, `equivocal`, `incongruous`, `ineffable`, `laconic`, `obfuscate`, `parsimonious`, `pernicious`, `quintessential`, `recalcitrant`, `sagacious`, `sycophant`, `tenuous`, `vitriolic`, `circumspect`, `deleterious`, `elucidate`, `idiosyncratic`, `perspicacious`).
+
+### 4. Selective & Idempotent Import + Kiểm thử `lexilingo_test` (2026-11-19)
+- **`backend-service/app/core/cefr_vocabulary_data.py`**: Gắn trường `audit_status` (`CONFIRMED_SOURCE` / `CONFLICT` / `BLOCKED`) và hàm `get_cefr_audit_summary()`, vẫn bảo toàn 100% `AI_GENERATED + NEEDS_REVIEW` và `source_reference=None`.
+- **`backend-service/scripts/seed_cefr_vocabulary.py`**: Bổ sung `select_cefr_items()` cùng cờ `--only-confirmed-source` (chọn đúng `88` mục `CONFIRMED_SOURCE` thay vì cả `180` mục) và `--levels` (lọc theo cấp CEFR), giữ nguyên cờ `--only-verified` (`0` mục) và bảo toàn mọi dòng non-CEFR / các dòng chưa chọn trong DB.
+- **Kết quả kiểm thử trên `lexilingo_test` (DB chính `lexilingo` không bị chạm)**:
+  - `pytest -p no:cacheprovider tests/test_cefr_vocabulary_safe_seed_and_srs_uat.py tests/test_cefr_vocabulary_seed.py -q`: **`29 passed in 6.20s`**.
+  - CLI `--target test --only-confirmed-source --dry-run` / `--apply` (2 lần liên tiếp): `selected=88, created=0, updated=0, unchanged=88, preserved_non_cefr=1, total_rows_after_flush=181`.
+  - CLI `--target test --only-confirmed-source --levels C2 --dry-run`: `selected=6, unchanged=6, preserved_non_cefr=1, total_rows_after_flush=181`.
+  - CLI `--target test --apply` (2 lần liên tiếp): `selected=180, created=0, updated=0, unchanged=180, preserved_non_cefr=1, total_rows_after_flush=181`.
+  - CLI `--target test --only-verified --dry-run`: `selected=0, created=0, updated=0, unchanged=0, preserved_non_cefr=1, total_rows_after_flush=181`.
+  - `ruff check app/core/cefr_vocabulary_data.py scripts/seed_cefr_vocabulary.py tests/test_cefr_vocabulary_safe_seed_and_srs_uat.py`: **`All checks passed!`**.

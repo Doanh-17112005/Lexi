@@ -131,12 +131,14 @@ class VocabularyRepositoryImpl implements VocabularyRepository {
     String userVocabularyId,
     ReviewQuality quality, {
     int? timeSpentMs,
+    String? idempotencyKey,
   }) async {
     try {
       final model = await remoteDataSource.submitReview(
         userVocabularyId,
         quality.value,
         timeSpentMs: timeSpentMs,
+        idempotencyKey: idempotencyKey,
       );
       return Right(model.toEntity());
     } on ServerException catch (e) {

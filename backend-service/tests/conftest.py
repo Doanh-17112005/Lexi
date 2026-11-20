@@ -198,27 +198,103 @@ async def db_engine():
 @pytest.fixture
 async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
     """Create test database session"""
+    from app.core.redis import RedisClient
+
     async_session = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
 
-    async with async_session() as session:
-        yield session
+    prev_instance = RedisClient._instance
+    prev_connected = RedisClient._connected
+    RedisClient._instance = _InMemoryAsyncRedis()
+    RedisClient._connected = True
+
+    try:
+        async with async_session() as session:
+            yield session
+    finally:
+        RedisClient._instance = prev_instance
+        RedisClient._connected = prev_connected
+
+
+class _InMemoryAsyncRedis:
+    """Lightweight async Redis double for ASGITransport tests (lifespan skipped)."""
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+        self.streams: dict[str, list[tuple[str, dict]]] = {}
+
+    async def get(self, key: str):
+        return self.store.get(key)
+
+    async def set(self, key: str, value, ex=None):
+        self.store[key] = str(value)
+        return True
+
+    async def setex(self, key: str, ttl: int, value):
+        self.store[key] = str(value)
+        return True
+
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            if key in self.store:
+                del self.store[key]
+                removed += 1
+        return removed
+
+    async def exists(self, *keys: str) -> int:
+        return sum(1 for key in keys if key in self.store)
+
+    async def incr(self, key: str) -> int:
+        val = int(self.store.get(key, 0)) + 1
+        self.store[key] = str(val)
+        return val
+
+    async def expire(self, key: str, ttl: int) -> bool:
+        return key in self.store
+
+    async def xadd(self, stream: str, fields: dict, maxlen=None, approximate=True):
+        entry_id = f"{len(self.streams.get(stream, [])) + 1}-0"
+        self.streams.setdefault(stream, []).append((entry_id, dict(fields)))
+        return entry_id
+
+    async def scan_iter(self, match: str | None = None, count: int = 200):
+        import fnmatch
+
+        for key in list(self.store.keys()):
+            if match is None or fnmatch.fnmatch(key, match):
+                yield key
+
+    async def ping(self) -> bool:
+        return True
 
 
 @pytest.fixture
 async def async_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     """Create async HTTP client for API testing"""
     from httpx import ASGITransport
+    from app.core.redis import RedisClient
 
     async def override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+    # ASGITransport does not execute FastAPI's lifespan, so provide an isolated
+    # in-memory Redis instance matching connected-lifespan behavior. Tests that
+    # explicitly verify Redis-down behavior still override RedisClient.get_instance.
+    prev_instance = RedisClient._instance
+    prev_connected = RedisClient._connected
+    RedisClient._instance = _InMemoryAsyncRedis()
+    RedisClient._connected = True
 
-    app.dependency_overrides.clear()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+    finally:
+        RedisClient._instance = prev_instance
+        RedisClient._connected = prev_connected
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture

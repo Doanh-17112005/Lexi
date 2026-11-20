@@ -44,6 +44,7 @@ class GamesProvider extends ChangeNotifier {
   SpellingBeeGame? _spellingBee;
   GrammarQuizGame? _grammarQuiz;
   HangmanGame? _hangman;
+  String _selectedGrammarDifficulty = 'medium';
 
   // ── XP/Profile State ──────────────────────────────────────────────────────
   XPProfile? _xpProfile;
@@ -62,6 +63,7 @@ class GamesProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   String get selectedLevel => _selectedLevel;
+  String get selectedGrammarDifficulty => _selectedGrammarDifficulty;
   GameType? get currentGame => _currentGame;
 
   WordScrambleGame? get wordScramble => _wordScramble;
@@ -235,15 +237,26 @@ class GamesProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> loadGrammarQuiz({String? topic, int count = 10}) async {
+  Future<void> loadGrammarQuiz({
+    String? topic,
+    String? difficulty,
+    int count = 10,
+  }) async {
     _resetAwardState();
     _grammarQuiz = null;
     _setLoading(true);
     _currentGame = GameType.grammarQuiz;
+    if (difficulty != null &&
+        const ['easy', 'medium', 'hard'].contains(difficulty)) {
+      _selectedGrammarDifficulty = difficulty;
+    }
+    final requestedDifficulty = _selectedGrammarDifficulty;
     try {
       final progress = await _resume(GameType.grammarQuiz);
       final requestedTopic = topic ?? 'mixed';
-      if (progress != null && progress.content['topic'] == requestedTopic) {
+      if (progress != null &&
+          progress.content['topic'] == requestedTopic &&
+          progress.content['difficulty_tier'] == requestedDifficulty) {
         _grammarQuiz = GrammarQuizGame.fromJson(_resumedContent(progress));
       } else {
         if (progress != null) {
@@ -256,6 +269,7 @@ class GamesProvider extends ChangeNotifier {
         _grammarQuiz = await _repository.getGrammarQuiz(
           level: _selectedLevel,
           topic: topic,
+          difficulty: requestedDifficulty,
           count: count,
         );
         await _rememberSession(GameType.grammarQuiz, _grammarQuiz!.sessionId);

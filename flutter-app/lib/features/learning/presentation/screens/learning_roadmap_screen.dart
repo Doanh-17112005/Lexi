@@ -285,9 +285,20 @@ class _ZigzagRoadmap extends StatelessWidget {
                           child: _LessonNode(
                             layout: n,
                             onTap: n.lesson.isLocked
-                                ? null
-                                : () {
-                                    Navigator.push(
+                                ? () {
+                                    ScaffoldMessenger.of(context)
+                                      ..hideCurrentSnackBar()
+                                      ..showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'learning.lessonLockedHint'.tr(),
+                                          ),
+                                          behavior: SnackBarBehavior.floating,
+                                        ),
+                                      );
+                                  }
+                                : () async {
+                                    await Navigator.push(
                                       context,
                                       MaterialPageRoute(
                                         builder: (_) => LearningSessionScreen(
@@ -296,6 +307,10 @@ class _ZigzagRoadmap extends StatelessWidget {
                                         ),
                                       ),
                                     );
+                                    if (!context.mounted) return;
+                                    context
+                                        .read<LearningProvider>()
+                                        .loadRoadmap(courseId);
                                   },
                           ),
                         ),

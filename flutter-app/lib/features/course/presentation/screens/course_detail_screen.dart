@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lexilingo_app/core/widgets/lottie_loading_widget.dart';
 import 'package:provider/provider.dart';
 import 'package:lexilingo_app/features/course/presentation/providers/course_provider.dart';
+import 'package:lexilingo_app/features/home/presentation/providers/home_provider.dart';
 import 'package:lexilingo_app/features/course/domain/entities/course_detail_entity.dart';
 import 'package:lexilingo_app/features/learning/presentation/screens/learning_session_screen.dart';
 import 'package:lexilingo_app/features/learning/presentation/screens/learning_roadmap_screen.dart';
@@ -568,8 +569,9 @@ class _LessonTile extends StatelessWidget {
       ),
       onTap: isLocked
           ? null
-          : () {
-              Navigator.push(
+          : () async {
+              final courseProvider = context.read<CourseProvider>();
+              final completed = await Navigator.push<bool>(
                 context,
                 MaterialPageRoute(
                   builder: (context) => LearningSessionScreen(
@@ -578,6 +580,19 @@ class _LessonTile extends StatelessWidget {
                   ),
                 ),
               );
+              if (completed == true && context.mounted) {
+                await courseProvider.loadCourseDetail(
+                  courseId,
+                  forceRefresh: true,
+                );
+                if (context.mounted) {
+                  try {
+                    await context.read<HomeProvider>().loadEnrolledCourses();
+                  } catch (_) {
+                    // HomeProvider may not be mounted in isolated tests.
+                  }
+                }
+              }
             },
     );
   }

@@ -1433,7 +1433,8 @@
     "startLesson": "开始上课",
     "correct": "正确的！",
     "notQuite": "不完全是",
-    "loadingRoadmap": "正在加载学习路线…"
+    "loadingRoadmap": "正在加载学习路线…",
+    "lessonLockedHint": "完成上一课即可解锁本课。"
   },
   "books": {
     "library": "图书图书馆",

@@ -16,8 +16,12 @@ STARTER_TOPIC_QUOTAS: dict[str, int] = {
     "technology": 33,
 }
 
+CANONICAL_TOPICS: tuple[str, ...] = tuple(STARTER_TOPIC_QUOTAS.keys())
+
 TOPIC_ALIASES: dict[str, str] = {
     "daily_life": "daily",
+    "daily-life": "daily",
+    "daily life": "daily",
 }
 
 # Fill the more specific topics before the broad general bucket.

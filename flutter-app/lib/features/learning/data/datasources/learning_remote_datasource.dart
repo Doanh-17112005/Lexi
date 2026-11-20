@@ -37,6 +37,9 @@ abstract class LearningRemoteDataSource {
   Future<ApiResponseEnvelope<CourseRoadmapModel>> getCourseRoadmap(
     String courseId,
   );
+
+  /// POST /learning/lessons/{lesson_id}/theory-viewed - Mark grammar theory viewed
+  Future<void> markTheoryViewed(String lessonId);
 }
 
 /// Implementation of LearningRemoteDataSource
@@ -128,5 +131,10 @@ class LearningRemoteDataSourceImpl implements LearningRemoteDataSource {
       response,
       (data) => CourseRoadmapModel.fromJson(data as Map<String, dynamic>),
     );
+  }
+
+  @override
+  Future<void> markTheoryViewed(String lessonId) async {
+    await _apiClient.post('/learning/lessons/$lessonId/theory-viewed');
   }
 }

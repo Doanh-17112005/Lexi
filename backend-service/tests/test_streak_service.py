@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.models.progress import DailyActivity
 from app.services import streak_service
-from app.services.streak_service import update_user_streak
+from app.services.streak_service import get_or_create_daily_activity, update_user_streak
 
 
 def _result(value=None):
@@ -76,3 +76,46 @@ async def test_update_user_streak_reuses_pending_daily_activity(
     ).scalars().all()
     assert activities == [pending_activity]
     assert activities[0].vocabulary_reviewed == 1
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_daily_activity_recovers_from_concurrent_insert(
+    monkeypatch, db_session, test_user
+):
+    from sqlalchemy.exc import IntegrityError
+
+    fixed_today = date(2026, 9, 1)
+    winner = DailyActivity(
+        user_id=test_user.id,
+        activity_date=fixed_today,
+        xp_earned=15,
+    )
+    db_session.add(winner)
+    await db_session.commit()
+
+    # Simulate a stale snapshot on the first SELECT followed by a unique constraint
+    # collision during nested flush, verifying recovery fetches the existing row.
+    real_execute = db_session.execute
+    calls = {"count": 0}
+
+    async def raced_execute(stmt, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return _result(None)
+        return await real_execute(stmt, *args, **kwargs)
+
+    real_flush = db_session.flush
+
+    async def raced_flush(*args, **kwargs):
+        raise IntegrityError("INSERT", {}, Exception("idx_daily_activity_user_date"))
+
+    monkeypatch.setattr(db_session, "execute", raced_execute)
+    monkeypatch.setattr(db_session, "flush", raced_flush)
+
+    recovered = await get_or_create_daily_activity(
+        db_session, test_user.id, today=fixed_today
+    )
+
+    monkeypatch.setattr(db_session, "flush", real_flush)
+    assert recovered.id == winner.id
+    assert recovered.xp_earned == 15

@@ -380,7 +380,7 @@ class _LexiLingoAppState extends State<LexiLingoApp>
           create: (_) => di.sl<StreakProvider>()..loadStreak(),
         ),
         ChangeNotifierProvider(
-          create: (_) => di.sl<DailyChallengesProvider>()..loadChallenges(),
+          create: (_) => di.sl<DailyChallengesProvider>(),
         ),
         // No eager load: the Content tab calls load() when first opened.
         ChangeNotifierProvider(create: (_) => di.sl<ContentActivityProvider>()),

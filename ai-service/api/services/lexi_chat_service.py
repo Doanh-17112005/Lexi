@@ -15,7 +15,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -654,7 +654,9 @@ async def run_lexi_pipeline(
 
     # ── Persist messages ──
     message_id = str(uuid.uuid4())
-    timestamp = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    timestamp = now.isoformat()
+    assistant_timestamp = (now + timedelta(milliseconds=1)).isoformat()
     user_message = {
         "id": str(uuid.uuid4()),
         "role": "user",
@@ -665,7 +667,7 @@ async def run_lexi_pipeline(
         "id": message_id,
         "role": "assistant",
         "content": lexi_response,
-        "timestamp": timestamp,
+        "timestamp": assistant_timestamp,
     }
 
     # Fire all independent writes concurrently: cache append + MongoDB writes.
@@ -819,6 +821,11 @@ async def stream_lexi_chat(
     # degraded session store from holding the HTTP response until the edge
     # proxy returns a 504.
     yield "event: thinking\ndata: {}\n\n"
+
+    if request.input_type == "voice" and request.audio_base64:
+        transcript = await _transcribe_audio(request.audio_base64)
+        if transcript:
+            user_text = transcript
 
     # 2. Session management. Keep sending data events while Redis/Mongo is
     # slow so Cloudflare and nginx do not treat the stream as idle.
@@ -1065,7 +1072,9 @@ async def stream_lexi_chat(
 
     # 5. Persist messages (parallelised)
     message_id = str(uuid.uuid4())
-    timestamp = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    timestamp = now.isoformat()
+    assistant_timestamp = (now + timedelta(milliseconds=1)).isoformat()
     user_message = {
         "id": str(uuid.uuid4()),
         "role": "user",
@@ -1076,10 +1085,13 @@ async def stream_lexi_chat(
         "id": message_id,
         "role": "assistant",
         "content": lexi_response,
-        "timestamp": timestamp,
+        "timestamp": assistant_timestamp,
     }
 
+    story_ctx = request.story_context
+
     async def _stream_persist():
+        nonlocal story_ctx
         await asyncio.gather(
             append_lexi_messages(session_id, [user_message, assistant_message]),
             db["lexi_messages"].insert_many([
@@ -1089,7 +1101,7 @@ async def stream_lexi_chat(
             db["lexi_sessions"].update_one(
                 {"session_id": session_id},
                 {
-                    "$set": {"updated_at": timestamp, "user_id": request.user_id},
+                    "$set": {"updated_at": assistant_timestamp, "user_id": request.user_id},
                     "$inc": {"message_count": 2},
                     "$setOnInsert": {
                         "created_at": timestamp,
@@ -1101,16 +1113,18 @@ async def stream_lexi_chat(
             ),
         )
         cached_sess = await lexi_store.get_session(session_id) or {}
+        if not story_ctx:
+            story_ctx = cached_sess.get("story_context")
         cached_count = int(cached_sess.get("message_count") or 0)
         await lexi_store.set_session(session_id, {
             "session_id": session_id,
             "user_id": request.user_id,
             "created_at": cached_sess.get("created_at", timestamp),
-            "updated_at": timestamp,
+            "updated_at": assistant_timestamp,
             "title": cached_sess.get("title", "Lexi Chat"),
             "message_count": cached_count + 2,
             "persona": cached_sess.get("persona", "lexi"),
-            "story_context": request.story_context,
+            "story_context": story_ctx,
         })
 
     try:
@@ -1168,7 +1182,7 @@ async def stream_lexi_chat(
         "suggested_courses": [course.model_dump() for course in suggested_courses],
         "native_hint": native_hint,
         "scores": scores,
-        "story_context": request.story_context,
+        "story_context": story_ctx,
         "audio_base64": audio_b64,
         "metadata": {
             "latency_ms": total_ms,

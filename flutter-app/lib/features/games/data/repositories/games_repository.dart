@@ -138,14 +138,18 @@ class GamesRepository {
 
   // ── Grammar Quiz ──────────────────────────────────────────────────────────
 
-  /// Full session — includes timer config and topic info.
+  /// Full session — includes timer config, difficulty tier, and topic info.
   Future<GrammarQuizGame> getGrammarQuiz({
     String level = 'B1',
     String? topic,
+    String? difficulty,
     int count = 10,
   }) async {
     final query = StringBuffer('/games/grammar-quiz?level=$level&count=$count');
     if (topic != null) query.write('&topic=$topic');
+    if (difficulty != null && difficulty.isNotEmpty) {
+      query.write('&difficulty=$difficulty');
+    }
     final data = await _apiClient.get(query.toString());
     return GrammarQuizGame.fromJson(data);
   }

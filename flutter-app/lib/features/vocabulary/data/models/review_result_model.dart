@@ -110,13 +110,19 @@ class ReviewResultModel extends ReviewResultEntity {
 class ReviewSubmissionModel {
   final int quality; // 0-5
   final int? timeSpentMs; // Optional: time spent on card
+  final String? idempotencyKey;
 
-  const ReviewSubmissionModel({required this.quality, this.timeSpentMs});
+  const ReviewSubmissionModel({
+    required this.quality,
+    this.timeSpentMs,
+    this.idempotencyKey,
+  });
 
   Map<String, dynamic> toJson() {
     return {
       'quality': quality,
       if (timeSpentMs != null) 'time_spent_ms': timeSpentMs,
+      if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
     };
   }
 }

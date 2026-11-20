@@ -273,11 +273,12 @@ class _GamesHubScreenState extends State<GamesHubScreen>
   progress.DailyChallengeEntity? _selectDailyChallenge(
     DailyChallengesProvider provider,
   ) {
-    if (provider.challenges.isEmpty) return null;
-    return provider.challenges.firstWhere(
-      (challenge) => !challenge.isCompleted,
-      orElse: () => provider.challenges.first,
-    );
+    final challenges = provider.challenges;
+    if (challenges.isEmpty) return null;
+    for (final challenge in challenges) {
+      if (!challenge.isCompleted) return challenge;
+    }
+    return challenges.first;
   }
 
   Future<void> _handleDailyChallengeTap(

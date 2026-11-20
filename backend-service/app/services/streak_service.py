@@ -2,6 +2,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 from sqlalchemy import select, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.gamification import LeaderboardEntry
@@ -58,6 +59,26 @@ async def get_or_create_daily_activity(
         study_time_minutes=0,
         vocabulary_reviewed=0,
     )
+    if isinstance(db, AsyncSession):
+        try:
+            async with db.begin_nested():
+                db.add(created)
+                await db.flush()
+            return created
+        except IntegrityError:
+            retry_result = await db.execute(
+                select(DailyActivity).where(
+                    and_(
+                        DailyActivity.user_id == user_id,
+                        DailyActivity.activity_date == today,
+                    )
+                )
+            )
+            existing = retry_result.scalar_one_or_none()
+            if existing is not None:
+                return existing
+            raise
+
     db.add(created)
     return created
 

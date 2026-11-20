@@ -27,6 +27,35 @@ class VocabLibraryPage extends StatefulWidget {
 
 class _VocabLibraryPageState extends State<VocabLibraryPage> {
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _wordsScrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _wordsScrollController.addListener(_onWordsScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final provider = context.read<VocabProvider>();
+      unawaited(provider.loadWords());
+      unawaited(provider.loadDecks());
+    });
+  }
+
+  @override
+  void dispose() {
+    _wordsScrollController.removeListener(_onWordsScroll);
+    _wordsScrollController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onWordsScroll() {
+    if (!_wordsScrollController.hasClients) return;
+    final position = _wordsScrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 200) {
+      unawaited(context.read<VocabProvider>().loadMoreWords());
+    }
+  }
 
   static const Map<String, _TagMeta> _tagMeta = {
     'general': _TagMeta(
@@ -289,11 +318,20 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
                               _showAddWordDialog(context, vocabProvider),
                         )
                       : RefreshIndicator(
-                          onRefresh: () => vocabProvider.loadWords(),
+                          onRefresh: () => vocabProvider.loadWords(force: true),
                           child: ListView.builder(
+                            controller: _wordsScrollController,
                             padding: const EdgeInsets.all(16),
-                            itemCount: words.length,
+                            itemCount:
+                                words.length +
+                                (_hasPaginationFooter(vocabProvider) ? 1 : 0),
                             itemBuilder: (context, index) {
+                              if (index >= words.length) {
+                                return _buildPaginationFooter(
+                                  context,
+                                  vocabProvider,
+                                );
+                              }
                               final word = words[index];
                               return _buildWordCard(context, word);
                             },
@@ -1144,6 +1182,54 @@ class _VocabLibraryPageState extends State<VocabLibraryPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  bool _hasPaginationFooter(VocabProvider provider) =>
+      provider.isLoadingMore ||
+      provider.loadMoreError != null ||
+      provider.hasMoreWords;
+
+  Widget _buildPaginationFooter(
+    BuildContext context,
+    VocabProvider provider,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    if (provider.isLoadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (provider.loadMoreError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              provider.loadMoreError!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.error, fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => unawaited(provider.loadMoreWords()),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: Text('common.retry'.tr()),
+            ),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: OutlinedButton(
+          onPressed: () => unawaited(provider.loadMoreWords()),
+          child: const Text('Load more'),
+        ),
       ),
     );
   }

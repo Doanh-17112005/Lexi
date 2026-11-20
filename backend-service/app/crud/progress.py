@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.progress import UserCourseProgress, LessonCompletion
 from app.models.course import Course, Unit, Lesson
+from app.services.content_publication_policy import is_lesson_learner_visible
 
 
 class ProgressCRUD:
@@ -67,7 +68,9 @@ class ProgressCRUD:
         user_id: str,
         course_id: str,
         progress_percentage: float,
-        xp_earned: int = 0
+        xp_earned: int = 0,
+        *,
+        commit: bool = True,
     ) -> UserCourseProgress:
         """Update user's course progress"""
         # Count actual passed lessons for this course from lesson_completions
@@ -104,8 +107,11 @@ class ProgressCRUD:
             progress.total_xp_earned += xp_earned
             progress.last_activity_at = datetime.now(timezone.utc)
 
-        await db.commit()
-        await db.refresh(progress)
+        if commit:
+            await db.commit()
+            await db.refresh(progress)
+        else:
+            await db.flush()
         return progress
     
     @staticmethod
@@ -131,7 +137,9 @@ class ProgressCRUD:
         user_id: str,
         lesson_id: str,
         score: float,
-        pass_threshold: float = 80.0
+        pass_threshold: float = 80.0,
+        *,
+        commit: bool = True,
     ) -> tuple[LessonCompletion, int]:
         """
         Mark a lesson as complete and return completion record + XP earned
@@ -164,8 +172,11 @@ class ProgressCRUD:
                 if is_passed and not old_passed:
                     xp_earned = lesson.xp_reward or 0
                 
-                await db.commit()
-                await db.refresh(existing)
+                if commit:
+                    await db.commit()
+                    await db.refresh(existing)
+                else:
+                    await db.flush()
                 return existing, xp_earned
             else:
                 # No improvement, no XP
@@ -185,8 +196,11 @@ class ProgressCRUD:
             if is_passed:
                 xp_earned = lesson.xp_reward or 0
             
-            await db.commit()
-            await db.refresh(completion)
+            if commit:
+                await db.commit()
+                await db.refresh(completion)
+            else:
+                await db.flush()
             return completion, xp_earned
     
     @staticmethod
@@ -209,54 +223,78 @@ class ProgressCRUD:
         if not progress:
             return None
         
-        # Single JOIN query: lessons + passed completions per unit — no N+1
-        rows = await db.execute(
-            select(
-                Unit.id,
-                Unit.title,
-                func.count(Lesson.id).label("total_lessons"),
-                func.sum(
-                    case(
-                        (and_(LessonCompletion.user_id == user_id, LessonCompletion.is_passed == True), 1),
-                        else_=0,
-                    )
-                ).label("completed_lessons"),
+        # Single JOIN query: lessons + passed completions per unit — no N+1.
+        # Filter unpublished/quarantined draft lessons using shared policy so
+        # staged drafts never dilute active learner completion percentages.
+        rows = (
+            await db.execute(
+                select(Unit, Lesson, LessonCompletion.is_passed)
+                .join(Lesson, Lesson.unit_id == Unit.id, isouter=True)
+                .join(
+                    LessonCompletion,
+                    and_(LessonCompletion.lesson_id == Lesson.id, LessonCompletion.user_id == user_id),
+                    isouter=True,
+                )
+                .where(Unit.course_id == course_id)
+                .order_by(Unit.order_index, Lesson.order_index)
             )
-            .join(Lesson, Lesson.unit_id == Unit.id, isouter=True)
-            .join(
-                LessonCompletion,
-                and_(LessonCompletion.lesson_id == Lesson.id, LessonCompletion.user_id == user_id),
-                isouter=True,
-            )
-            .where(Unit.course_id == course_id)
-            .group_by(Unit.id, Unit.title, Unit.order_index)
-            .order_by(Unit.order_index)
-        )
+        ).all()
+
+        unit_buckets: dict[str, dict] = {}
+        unit_order: list[str] = []
+        for unit, lesson, is_passed in rows:
+            uid = str(unit.id)
+            if uid not in unit_buckets:
+                unit_buckets[uid] = {
+                    "unit_id": uid,
+                    "unit_title": unit.title,
+                    "raw_lessons": 0,
+                    "total_lessons": 0,
+                    "completed_lessons": 0,
+                    "seen_lesson_ids": set(),
+                }
+                unit_order.append(uid)
+            bucket = unit_buckets[uid]
+            if lesson is None:
+                continue
+            bucket["raw_lessons"] += 1
+            if not is_lesson_learner_visible(lesson) or lesson.id in bucket["seen_lesson_ids"]:
+                continue
+            bucket["seen_lesson_ids"].add(lesson.id)
+            bucket["total_lessons"] += 1
+            if is_passed:
+                bucket["completed_lessons"] += 1
 
         units_progress = []
-        for row in rows:
-            total = row.total_lessons or 0
-            completed = int(row.completed_lessons or 0)
+        visible_total_lessons = 0
+        for uid in unit_order:
+            bucket = unit_buckets[uid]
+            # Hide draft-only units that contain lessons but zero learner-visible ones
+            if bucket["raw_lessons"] > 0 and bucket["total_lessons"] == 0:
+                continue
+            total = bucket["total_lessons"]
+            completed = bucket["completed_lessons"]
+            visible_total_lessons += total
             units_progress.append({
-                'unit_id': str(row.id),
-                'unit_title': row.title,
-                'total_lessons': total,
-                'completed_lessons': completed,
-                'progress_percentage': (completed / total * 100) if total else 0,
+                "unit_id": bucket["unit_id"],
+                "unit_title": bucket["unit_title"],
+                "total_lessons": total,
+                "completed_lessons": completed,
+                "progress_percentage": (completed / total * 100) if total else 0,
             })
-        
+
         return {
-            'course': {
-                'course_id': str(course.id),
-                'course_title': course.title,
-                'progress_percentage': progress.progress_percentage,
-                'lessons_completed': progress.lessons_completed,
-                'total_lessons': course.total_lessons or 0,
-                'total_xp_earned': progress.total_xp_earned,
-                'started_at': progress.started_at,
-                'last_activity_at': progress.last_activity_at,
+            "course": {
+                "course_id": str(course.id),
+                "course_title": course.title,
+                "progress_percentage": progress.progress_percentage,
+                "lessons_completed": progress.lessons_completed,
+                "total_lessons": visible_total_lessons or (course.total_lessons or 0),
+                "total_xp_earned": progress.total_xp_earned,
+                "started_at": progress.started_at,
+                "last_activity_at": progress.last_activity_at,
             },
-            'units_progress': units_progress
+            "units_progress": units_progress,
         }
     
     @staticmethod
@@ -265,36 +303,38 @@ class ProgressCRUD:
         user_id: str,
         course_id: str,
     ) -> float:
-        """Calculate course progress percentage based on completed lessons.
+        """Calculate course progress percentage based on completed published lessons.
 
-        Counts the lessons that actually exist rather than trusting the
-        denormalized ``Course.total_lessons`` — otherwise a learner who
-        finishes everything can be stuck below 100%.
+        Counts learner-visible lessons that actually exist rather than trusting
+        the denormalized ``Course.total_lessons`` or including staged drafts —
+        otherwise a learner who finishes everything can be stuck below 100%.
         """
-        total_result = await db.execute(
-            select(func.count(Lesson.id))
-            .join(Unit, Unit.id == Lesson.unit_id)
-            .where(Unit.course_id == course_id)
-        )
-        total_lessons = total_result.scalar() or 0
+        lesson_rows = (
+            await db.execute(
+                select(Lesson)
+                .join(Unit, Unit.id == Lesson.unit_id)
+                .where(Unit.course_id == course_id)
+            )
+        ).scalars().all()
+        visible_lesson_ids = [
+            lesson.id for lesson in lesson_rows if is_lesson_learner_visible(lesson)
+        ]
 
-        if not total_lessons:
+        if not visible_lesson_ids:
             return 0.0
 
         completed_result = await db.execute(
             select(func.count(LessonCompletion.id))
-            .join(Lesson, Lesson.id == LessonCompletion.lesson_id)
-            .join(Unit, Unit.id == Lesson.unit_id)
             .where(
                 and_(
-                    Unit.course_id == course_id,
+                    LessonCompletion.lesson_id.in_(visible_lesson_ids),
                     LessonCompletion.user_id == user_id,
                     LessonCompletion.is_passed == True,
                 )
             )
         )
         completed_count = completed_result.scalar() or 0
-        return (completed_count / total_lessons) * 100
+        return (completed_count / len(visible_lesson_ids)) * 100
     
     @staticmethod
     async def get_user_total_xp(

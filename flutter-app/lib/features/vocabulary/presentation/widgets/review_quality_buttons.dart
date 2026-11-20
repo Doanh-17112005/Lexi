@@ -41,33 +41,43 @@ class ReviewQualityButtons extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Main quality buttons (simplified - 3 options)
+          // 4 canonical SRS quality choices: Again (1), Hard (2), Good (3), Easy (4)
           Row(
             children: [
               Expanded(
                 child: _QualityButton(
                   label: 'flashcard.again'.tr(),
-                  subLabel: 'flashcard.hardDifficulty'.tr(),
+                  subLabel: '1',
                   color: AppColors.errorBright,
+                  quality: ReviewQuality.incorrect,
+                  onPressed: isLoading ? null : onQualitySelected,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _QualityButton(
+                  label: 'flashcard.hardDifficulty'.tr(),
+                  subLabel: '2',
+                  color: AppColors.deepOrange,
                   quality: ReviewQuality.hard,
                   onPressed: isLoading ? null : onQualitySelected,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: _QualityButton(
                   label: 'flashcard.goodDifficulty'.tr(),
-                  subLabel: 'flashcard.mediumDifficulty'.tr(),
+                  subLabel: '3',
                   color: AppColors.orange,
                   quality: ReviewQuality.good,
                   onPressed: isLoading ? null : onQualitySelected,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: _QualityButton(
                   label: 'flashcard.easyDifficulty'.tr(),
-                  subLabel: 'flashcard.perfectDifficulty'.tr(),
+                  subLabel: '4',
                   color: AppColors.greenSuccessBright,
                   quality: ReviewQuality.easy,
                   onPressed: isLoading ? null : onQualitySelected,
@@ -143,7 +153,7 @@ class _QualityButton extends StatelessWidget {
         onTap: isEnabled ? () => onPressed!(quality) : null,
         borderRadius: BorderRadius.circular(16),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(16),
@@ -151,12 +161,16 @@ class _QualityButton extends StatelessWidget {
           ),
           child: Column(
             children: [
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               const SizedBox(height: 4),

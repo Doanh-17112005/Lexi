@@ -1,3 +1,64 @@
+/// Sanitized grammar theory attached to a grammar lesson.
+class GrammarTheoryEntity {
+  final String? grammarItemId;
+  final String? version;
+  final String title;
+  final String? level;
+  final String? topic;
+  final String? summary;
+  final String explanation;
+  final List<dynamic> examples;
+  final List<dynamic> grammarPoints;
+  final List<String> linkedExerciseIds;
+
+  const GrammarTheoryEntity({
+    this.grammarItemId,
+    this.version,
+    required this.title,
+    this.level,
+    this.topic,
+    this.summary,
+    required this.explanation,
+    this.examples = const [],
+    this.grammarPoints = const [],
+    this.linkedExerciseIds = const [],
+  });
+
+  factory GrammarTheoryEntity.fromJson(Map<String, dynamic> json) {
+    return GrammarTheoryEntity(
+      grammarItemId: json['grammar_item_id']?.toString(),
+      version: json['version']?.toString(),
+      title: json['title'] as String? ?? '',
+      level: json['level'] as String?,
+      topic: json['topic'] as String?,
+      summary: json['summary'] as String?,
+      explanation: json['explanation'] as String? ?? '',
+      examples: (json['examples'] as List?) ?? const [],
+      grammarPoints: (json['grammar_points'] as List?) ?? const [],
+      linkedExerciseIds:
+          (json['linked_exercise_ids'] as List?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'grammar_item_id': grammarItemId,
+      'version': version,
+      'title': title,
+      'level': level,
+      'topic': topic,
+      'summary': summary,
+      'explanation': explanation,
+      'examples': examples,
+      'grammar_points': grammarPoints,
+      'linked_exercise_ids': linkedExerciseIds,
+    };
+  }
+}
+
 /// Lesson Entity
 /// Represents a lesson with its exercises
 class LessonEntity {
@@ -9,6 +70,8 @@ class LessonEntity {
   final List<Exercise> exercises;
   final int estimatedMinutes;
   final int xpReward;
+  final GrammarTheoryEntity? grammarTheory;
+  final bool theoryViewed;
 
   LessonEntity({
     required this.id,
@@ -19,7 +82,35 @@ class LessonEntity {
     required this.exercises,
     required this.estimatedMinutes,
     required this.xpReward,
+    this.grammarTheory,
+    this.theoryViewed = false,
   });
+
+  LessonEntity copyWith({
+    String? id,
+    String? title,
+    String? description,
+    String? outcome,
+    int? orderIndex,
+    List<Exercise>? exercises,
+    int? estimatedMinutes,
+    int? xpReward,
+    GrammarTheoryEntity? grammarTheory,
+    bool? theoryViewed,
+  }) {
+    return LessonEntity(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      outcome: outcome ?? this.outcome,
+      orderIndex: orderIndex ?? this.orderIndex,
+      exercises: exercises ?? this.exercises,
+      estimatedMinutes: estimatedMinutes ?? this.estimatedMinutes,
+      xpReward: xpReward ?? this.xpReward,
+      grammarTheory: grammarTheory ?? this.grammarTheory,
+      theoryViewed: theoryViewed ?? this.theoryViewed,
+    );
+  }
 
   factory LessonEntity.fromJson(Map<String, dynamic> json) {
     return LessonEntity(
@@ -35,6 +126,12 @@ class LessonEntity {
           [],
       estimatedMinutes: json['estimated_minutes'] as int? ?? 10,
       xpReward: json['xp_reward'] as int? ?? 50,
+      grammarTheory: json['grammar_theory'] is Map<String, dynamic>
+          ? GrammarTheoryEntity.fromJson(
+              json['grammar_theory'] as Map<String, dynamic>,
+            )
+          : null,
+      theoryViewed: json['theory_viewed'] as bool? ?? false,
     );
   }
 
@@ -48,6 +145,8 @@ class LessonEntity {
       'exercises': exercises.map((e) => e.toJson()).toList(),
       'estimated_minutes': estimatedMinutes,
       'xp_reward': xpReward,
+      if (grammarTheory != null) 'grammar_theory': grammarTheory!.toJson(),
+      'theory_viewed': theoryViewed,
     };
   }
 }
@@ -93,6 +192,34 @@ class Exercise {
     this.metadata,
   });
 
+  Exercise copyWith({
+    String? id,
+    ExerciseType? type,
+    String? uiType,
+    String? phase,
+    String? question,
+    List<String>? options,
+    String? correctAnswer,
+    String? explanation,
+    String? hint,
+    String? audioUrl,
+    Map<String, dynamic>? metadata,
+  }) {
+    return Exercise(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      uiType: uiType ?? this.uiType,
+      phase: phase ?? this.phase,
+      question: question ?? this.question,
+      options: options ?? this.options,
+      correctAnswer: correctAnswer ?? this.correctAnswer,
+      explanation: explanation ?? this.explanation,
+      hint: hint ?? this.hint,
+      audioUrl: audioUrl ?? this.audioUrl,
+      metadata: metadata ?? this.metadata,
+    );
+  }
+
   factory Exercise.fromJson(Map<String, dynamic> json) {
     return Exercise(
       id: json['id'] as String,
@@ -101,7 +228,7 @@ class Exercise {
       phase: json['phase'] as String?,
       question: json['question'] as String,
       options: (json['options'] as List?)?.map((e) => e as String).toList(),
-      correctAnswer: json['correct_answer'] as String,
+      correctAnswer: json['correct_answer']?.toString() ?? '',
       explanation: json['explanation'] as String?,
       hint: json['hint'] as String?,
       audioUrl: json['audio_url'] as String?,

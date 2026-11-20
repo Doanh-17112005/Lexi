@@ -234,4 +234,8 @@ class _FakeLearningRepository implements LearningRepository {
   @override
   Future<Either<Failure, CourseRoadmap>> getCourseRoadmap(String courseId) =>
       throw UnsupportedError('getCourseRoadmap is not used by this test');
+
+  @override
+  Future<Either<Failure, void>> markTheoryViewed(String lessonId) async =>
+      const Right(null);
 }

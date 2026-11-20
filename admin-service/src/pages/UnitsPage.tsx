@@ -85,6 +85,7 @@ export const UnitsPage = () => {
 
   const handleEdit = (unit: UnitItem) => {
     setEditingId(unit.id);
+    setFormCourseId(unit.course_id);
     setForm({
       title: unit.title,
       description: unit.description || "",
@@ -97,15 +98,29 @@ export const UnitsPage = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedTitle = form.title.trim();
+    if (!trimmedTitle) {
+      setError("Vui lòng nhập tên chương.");
+      return;
+    }
     const targetCourseId = activeCourseId || formCourseId;
-    if (!targetCourseId) return;
+    if (!editingId && !targetCourseId) {
+      setError("Vui lòng chọn khóa học.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
+      const normalizedOrder = Number.isFinite(form.order_index) ? Math.max(0, form.order_index) : units.length;
+      const payload = {
+        ...form,
+        title: trimmedTitle,
+        order_index: normalizedOrder,
+      };
       if (editingId) {
-        await updateUnit(editingId, form);
+        await updateUnit(editingId, payload);
       } else {
-        await createUnit({ ...form, course_id: targetCourseId, order_index: form.order_index || units.length });
+        await createUnit({ ...payload, course_id: targetCourseId! });
       }
       resetForm();
       setShowForm(false);

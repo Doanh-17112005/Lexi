@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { ApiError } from "../lib/api";
 import { authStore, resolveRole, Role, UserProfile } from "../lib/auth";
 import { getCurrentUser, loginRequest, googleLoginRequest, logoutRequest } from "../lib/authApi";
 
@@ -27,7 +28,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     if (!resolvedRole) {
       authStore.clear();
-      throw new Error("Tài khoản không có quyền truy cập Admin Dashboard.");
+      throw new ApiError("Tài khoản không có quyền truy cập Admin Dashboard.", 403);
     }
 
     authStore.user = profile;
@@ -83,7 +84,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         authStore.clear();
         setUser(null);
         setRole(null);
-        throw new Error("Tài khoản không có quyền truy cập Admin Dashboard.");
+        throw new ApiError("Tài khoản không có quyền truy cập Admin Dashboard.", 403);
       }
       authStore.user = profile;
       authStore.role = resolvedRole;

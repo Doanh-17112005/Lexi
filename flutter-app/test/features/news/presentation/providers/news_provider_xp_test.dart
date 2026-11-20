@@ -38,7 +38,10 @@ void main() {
     final repo = _FakeNewsRepository(quiz: quiz);
     final provider = NewsProvider(repository: repo);
 
-    await provider.loadQuiz('article-1');
+    await provider.loadQuiz(
+      'article-1',
+      article: const NewsArticle(id: 'article-1', title: 'News Article 1'),
+    );
     answers.forEach(provider.answerQuestion);
     provider.submitQuiz();
     await Future<void>.delayed(Duration.zero);
@@ -60,7 +63,10 @@ void main() {
     final repo = _FakeNewsRepository(quiz: quiz);
     final provider = NewsProvider(repository: repo);
 
-    await provider.loadQuiz('article-1');
+    await provider.loadQuiz(
+      'article-1',
+      article: const NewsArticle(id: 'article-1', title: 'News Article 1'),
+    );
     provider.answerQuestion(1, 0);
     provider.answerQuestion(2, 0);
     provider.submitQuiz();

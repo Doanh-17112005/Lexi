@@ -811,3 +811,51 @@ class TestDailyChallengeTemplates:
             icon = template["icon"]
             # Check it's not the old text format like "book", "cards"
             assert len(icon) <= 4, f"Template '{template['id']}' icon '{icon}' seems too long for emoji"
+
+
+
+class TestAchievementCatalogAndCommitRegression:
+    """Regression tests for SAMPLE_ACHIEVEMENTS condition types and route commit."""
+
+    def test_sample_achievements_use_supported_condition_types(self):
+        from app.core.sample_data_catalog import SAMPLE_ACHIEVEMENTS
+
+        supported = {
+            cond
+            for conditions in TRIGGER_CONDITIONS.values()
+            for cond in conditions
+        }
+        for ach in SAMPLE_ACHIEVEMENTS:
+            assert ach["condition_type"] in supported, (
+                f"Unsupported condition_type {ach['condition_type']!r} in SAMPLE_ACHIEVEMENTS"
+            )
+
+    @pytest.mark.asyncio
+    async def test_check_all_achievements_commits_when_unlocked(self):
+        from types import SimpleNamespace
+        from app.routes.gamification import check_all_achievements
+
+        fake_achievement = SimpleNamespace(
+            id=uuid4(),
+            name="First Steps",
+            description="Complete your first lesson.",
+            badge_icon=None,
+            badge_color="#4CAF50",
+            category="lessons",
+            rarity="common",
+            xp_reward=10,
+            gems_reward=5,
+        )
+        fake_db = MagicMock()
+        fake_db.commit = AsyncMock()
+        fake_user = SimpleNamespace(id=uuid4())
+
+        with patch(
+            "app.services.AchievementCheckerService.check_all",
+            new=AsyncMock(return_value=[fake_achievement]),
+        ), patch("app.routes.gamification.delete_cached", new=AsyncMock()):
+            res = await check_all_achievements(db=fake_db, current_user=fake_user)
+
+        assert res.success is True
+        assert len(res.data) == 1
+        fake_db.commit.assert_awaited_once()

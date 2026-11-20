@@ -66,7 +66,7 @@ void main() {
 
     test('maps tags list', () async {
       final result = await datasource.getWordOfDay();
-      expect(result.tags, contains('AWL'));
+      expect(result.tags, contains('awl'));
     });
   });
 

@@ -59,7 +59,22 @@ class UnitWithLessonsModel extends UnitWithLessonsEntity {
       iconUrl: json['icon_url'] as String?,
       lessons:
           (json['lessons'] as List<dynamic>?)
-              ?.map(
+              ?.where((e) {
+                if (e is! Map<String, dynamic>) return false;
+                if (e['is_published'] == false) return false;
+                final qa = (e['qa_status']?.toString() ?? '').toUpperCase();
+                final pub =
+                    (e['publication_state']?.toString() ?? '').toUpperCase();
+                if (qa == 'NEEDS_REVIEW' ||
+                    qa == 'DRAFT' ||
+                    qa == 'CONFLICT' ||
+                    qa == 'BLOCKED') {
+                  return false;
+                }
+                if (pub == 'DRAFT' || pub == 'QUARANTINED') return false;
+                return true;
+              })
+              .map(
                 (e) => LessonInRoadmapModel.fromJson(e as Map<String, dynamic>),
               )
               .toList() ??

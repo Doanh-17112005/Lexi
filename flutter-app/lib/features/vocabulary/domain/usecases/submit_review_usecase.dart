@@ -21,6 +21,7 @@ class SubmitReviewUseCase
       params.userVocabularyId,
       params.quality,
       timeSpentMs: params.timeSpentMs,
+      idempotencyKey: params.idempotencyKey,
     );
   }
 }
@@ -29,13 +30,20 @@ class SubmitReviewParams extends Equatable {
   final String userVocabularyId;
   final ReviewQuality quality;
   final int? timeSpentMs;
+  final String? idempotencyKey;
 
   const SubmitReviewParams({
     required this.userVocabularyId,
     required this.quality,
     this.timeSpentMs,
+    this.idempotencyKey,
   });
 
   @override
-  List<Object?> get props => [userVocabularyId, quality, timeSpentMs];
+  List<Object?> get props => [
+    userVocabularyId,
+    quality,
+    timeSpentMs,
+    idempotencyKey,
+  ];
 }

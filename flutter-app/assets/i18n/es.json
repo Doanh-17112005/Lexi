@@ -1433,7 +1433,8 @@
     "startLesson": "Iniciar lección",
     "correct": "¡Correcto!",
     "notQuite": "No exactamente",
-    "loadingRoadmap": "Cargando la ruta…"
+    "loadingRoadmap": "Cargando la ruta…",
+    "lessonLockedHint": "Completa la lección anterior para desbloquear esta."
   },
   "books": {
     "library": "Biblioteca de libros",

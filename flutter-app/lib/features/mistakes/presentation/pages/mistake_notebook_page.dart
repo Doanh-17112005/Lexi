@@ -49,6 +49,22 @@ class _MistakeNotebookPageState extends State<MistakeNotebookPage> {
     await _loadEntries();
   }
 
+  Future<void> _startReviewSession() async {
+    final due = _entries.where((e) => !e.isReviewed).toList(growable: false);
+    if (due.isEmpty) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _MistakeReviewDialog(
+        entries: due,
+        repository: widget.repository,
+      ),
+    );
+    if (mounted) {
+      await _loadEntries();
+    }
+  }
+
   Future<void> _deleteEntry(MistakeNotebookEntry entry) async {
     final shouldDelete = await showDialog<bool>(
       context: context,
@@ -119,6 +135,19 @@ class _MistakeNotebookPageState extends State<MistakeNotebookPage> {
                     unreviewed: _unreviewedCount,
                     reviewed: _reviewedCount,
                   ),
+                  if (_unreviewedCount > 0) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _startReviewSession,
+                        icon: const Icon(Icons.replay_rounded),
+                        label: Text(
+                          'Practice Mistakes ($_unreviewedCount)',
+                        ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   _FilterRow(
                     selected: _filter,
@@ -236,7 +265,6 @@ class _NotebookHeader extends StatelessWidget {
     );
   }
 }
-
 class _HeaderMetric extends StatelessWidget {
   const _HeaderMetric({required this.value, required this.label});
 
@@ -278,7 +306,6 @@ class _HeaderMetric extends StatelessWidget {
     );
   }
 }
-
 class _FilterRow extends StatelessWidget {
   const _FilterRow({required this.selected, required this.onChanged});
 
@@ -395,7 +422,6 @@ class _NotebookEmptyState extends StatelessWidget {
     );
   }
 }
-
 class _MistakeCard extends StatelessWidget {
   const _MistakeCard({
     required this.entry,
@@ -619,6 +645,140 @@ class _ReviewedPill extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MistakeReviewDialog extends StatefulWidget {
+  const _MistakeReviewDialog({
+    required this.entries,
+    required this.repository,
+  });
+
+  final List<MistakeNotebookEntry> entries;
+  final MistakeNotebookRepository repository;
+
+  @override
+  State<_MistakeReviewDialog> createState() => _MistakeReviewDialogState();
+}
+
+class _MistakeReviewDialogState extends State<_MistakeReviewDialog> {
+  final TextEditingController _controller = TextEditingController();
+  int _index = 0;
+  bool _checked = false;
+  bool _isCorrect = false;
+  bool _isSaving = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkAnswer() async {
+    if (_checked || _isSaving) return;
+    final entry = widget.entries[_index];
+    final typed = _controller.text.trim().toLowerCase();
+    final expected = entry.correctAnswer.trim().toLowerCase();
+    final correct = typed.isNotEmpty && typed == expected;
+
+    setState(() {
+      _isSaving = true;
+      _checked = true;
+      _isCorrect = correct;
+    });
+
+    if (correct) {
+      await widget.repository.markReviewed(entry.id);
+    } else {
+      await widget.repository.reopen(entry.id);
+    }
+
+    if (mounted) {
+      setState(() => _isSaving = false);
+    }
+  }
+
+  void _next() {
+    if (_index + 1 >= widget.entries.length) {
+      Navigator.of(context).pop();
+      return;
+    }
+    _controller.clear();
+    setState(() {
+      _index++;
+      _checked = false;
+      _isCorrect = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = widget.entries[_index];
+    final isLast = _index + 1 >= widget.entries.length;
+    return AlertDialog(
+      title: Text('Review (${_index + 1}/${widget.entries.length})'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              entry.sourceTitle,
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              entry.question,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              enabled: !_checked,
+              decoration: const InputDecoration(
+                labelText: 'Your answer',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (_) => _checkAnswer(),
+            ),
+            if (_checked) ...[
+              const SizedBox(height: 12),
+              Text(
+                _isCorrect
+                    ? 'Correct! Marked as reviewed.'
+                    : 'Incorrect. Correct answer: ${entry.correctAnswer}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: _isCorrect
+                      ? AppColors.greenSuccessBright
+                      : AppColors.errorBright,
+                ),
+              ),
+              if (entry.explanation.trim().isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(entry.explanation),
+              ],
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('common.cancel'.tr()),
+        ),
+        if (!_checked)
+          FilledButton(
+            onPressed: _isSaving ? null : _checkAnswer,
+            child: const Text('Check'),
+          )
+        else
+          FilledButton(
+            onPressed: _isSaving ? null : _next,
+            child: Text(isLast ? 'Finish' : 'Next'),
+          ),
+      ],
     );
   }
 }

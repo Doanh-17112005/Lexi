@@ -39,6 +39,8 @@ class AchievementRemoteDataSourceImpl implements AchievementRemoteDataSource {
   }
 
   Future<void> _warmBadgeCache(List<UserAchievementModel> badges) async {
+    if (kIsWeb) return;
+
     final Set<String> urls = <String>{};
 
     for (final badge in badges) {

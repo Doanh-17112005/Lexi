@@ -292,7 +292,9 @@ class NewsProvider extends ChangeNotifier {
 
     final article = _currentQuizArticle;
     final sourceId = article?.id ?? _currentQuizArticleId ?? 'news_quiz';
-    final sourceTitle = article?.title ?? 'News quiz';
+    final sourceTitle = (article != null && article.title.trim().isNotEmpty)
+        ? article.title.trim()
+        : 'News quiz';
 
     for (final question in quiz.questions) {
       final selectedIndex = _answers[question.id];

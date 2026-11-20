@@ -627,14 +627,36 @@ export type VocabItem = {
   id: string;
   word: string;
   definition?: string;
-  translation?: Record<string, string>;
+  translation?: Record<string, any>;
   part_of_speech: string;
   pronunciation?: string;
   difficulty_level: string;
+  tags?: string[];
+  topics?: string[];
+  qa_status?: "VERIFIED" | "NEEDS_REVIEW" | "UNREVIEWED" | string;
+  provenance?: string;
+  source_reference?: string | null;
 };
 
-export const listVocabulary = async (limit = 100, offset = 0) =>
-  apiFetch<AdminResponse<VocabItem[]>>(`${ENV.backendUrl}/admin/vocabulary?limit=${limit}&offset=${offset}`);
+export const listVocabulary = async (
+  limit = 100,
+  offset = 0,
+  filters?: {
+    search?: string;
+    difficulty_level?: string;
+    topic?: string;
+    qa_status?: string;
+  }
+) => {
+  const url = new URL(`${ENV.backendUrl}/admin/vocabulary`);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("offset", String(offset));
+  if (filters?.search?.trim()) url.searchParams.set("search", filters.search.trim());
+  if (filters?.difficulty_level) url.searchParams.set("difficulty_level", filters.difficulty_level);
+  if (filters?.topic) url.searchParams.set("topic", filters.topic);
+  if (filters?.qa_status) url.searchParams.set("qa_status", filters.qa_status);
+  return apiFetch<AdminResponse<VocabItem[]>>(url.toString());
+};
 
 export const createVocabulary = async (params: {
   word: string;
@@ -643,6 +665,9 @@ export const createVocabulary = async (params: {
   part_of_speech?: string;
   pronunciation?: string;
   difficulty_level?: string;
+  topics?: string;
+  qa_status?: string;
+  source_reference?: string;
 }) => {
   const url = new URL(`${ENV.backendUrl}/admin/vocabulary`);
   Object.entries(params).forEach(([k, v]) => { if (v) url.searchParams.set(k, v); });
@@ -656,6 +681,9 @@ export const updateVocabulary = async (id: string, params: Partial<{
   part_of_speech: string;
   pronunciation: string;
   difficulty_level: string;
+  topics: string;
+  qa_status: string;
+  source_reference: string;
 }>) => {
   const url = new URL(`${ENV.backendUrl}/admin/vocabulary/${id}`);
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined) url.searchParams.set(k, v); });

@@ -405,3 +405,11 @@ Phạm vi chỉ gồm 10 slot C2 #21–#30. Các trang Cambridge Dictionary và 
 | C2-30 | `perspicacious` (adjective) | [Cambridge](https://dictionary.cambridge.org/dictionary/english/perspicacious) xác nhận formal/approving adjective chỉ khả năng nhanh chóng nhận ra, hiểu hoặc phán đoán chính xác. Definition cũ thêm điều kiện “subtle or difficult” nhưng bỏ khả năng phán đoán chính xác; ví dụ phân tích dự đoán chuyển biến phù hợp nghĩa nguồn. Trang không hiện CEFR, EVP không trả bản ghi. | **BLOCKED**; đã sửa definition/meaning, giữ `NEEDS_REVIEW`. |
 
 Kết quả batch: hoàn thành đúng C2 #21–#30; CEFR `CONFIRMED_SOURCE: 0`, `CONFLICT: 0`, `BLOCKED: 10`. Không thay headword; sửa ba lỗi phạm vi nghĩa đã được Cambridge chứng minh ở `sycophant`, `vitriolic`, `perspicacious`. Không mục nào chuyển `VERIFIED`. Vocabulary test `24 passed`; Ruff và `git diff --check` đạt (Git chỉ cảnh báo CRLF ở các file ngoài phạm vi, không báo whitespace error).
+
+## Tái đối chứng trực tiếp Oxford sense-level & Selective Seed — 2026-11-19
+
+- Đối chứng trực tiếp qua `The_Oxford_3000.pdf`, `The_Oxford_5000.pdf` và các trang nghĩa `https://www.oxfordlearnersdictionaries.com/definition/english/<headword>` (HTTP 200) ngày 2026-11-19 cập nhật tổng trạng thái từ `81 CONFIRMED_SOURCE / 66 CONFLICT / 33 BLOCKED` thành **`88 CONFIRMED_SOURCE / 66 CONFLICT / 26 BLOCKED`** (xem chi tiết từng mục ở `docs/VOCABULARY_FINAL_AUDIT.md`):
+  - **Giải quyết sang `CONFIRMED_SOURCE` (`+9`)**: B1 `independent` (nghĩa 2 `b1`), B1 `manage` (nghĩa 2 `b1`), C1 `articulate` (tính từ `c1`), C1 `synthesis` (nghĩa 1 `c1`), C2 `acquiesce`, `apocryphal`, `intransigent`, `magnanimous`, `zeitgeist` (gắn `fkcefr="c2"` + `topic_cefr=c2`).
+  - **Chuyển về `CONFLICT` do đối chứng PDF cũ bỏ sót (`+2`)**: A2 `airport` (`Oxford 3000` ghi `A1`, Cambridge `A2`) và C1 `insight` (`Oxford 3000` ghi `B2`, Cambridge `C1`).
+- Toàn bộ **180/180** mục vẫn giữ **`AI_GENERATED + NEEDS_REVIEW`** (`source_reference=None`, **`0 VERIFIED`**).
+- `scripts/seed_cefr_vocabulary.py` bổ sung `--only-confirmed-source` (chọn `88` mục) và `--levels` để nạp chọn lọc idempotent, bảo toàn các dòng non-CEFR và không tự nâng trạng thái lên `VERIFIED`.

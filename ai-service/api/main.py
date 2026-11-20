@@ -478,7 +478,18 @@ async def health_check():
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
         )
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "providers": {
+            "groq_configured": bool(
+                os.getenv("GROQ_API_KEY", "").strip()
+                or os.getenv("GROQ_API_KEYS", "").strip()
+            ),
+            "gemini_configured": bool(os.getenv("GEMINI_API_KEY", "").strip()),
+            "ollama_enabled": bool(settings.OLLAMA_ENABLED or settings.USE_OLLAMA),
+        },
+    }
 
 
 @app.get("/live")

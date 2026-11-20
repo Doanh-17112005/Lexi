@@ -13,7 +13,6 @@ INPUT → KG_EXPAND → DIAGNOSE → RETRIEVE → GENERATE → [VIETNAMESE] → 
 
 import asyncio
 import logging
-import os
 import re
 import json
 import time
@@ -594,10 +593,14 @@ Be encouraging and focus on the most important errors first."""
                 logger.warning(f"[diagnose_node] Failed to parse AI response: {e}")
                 # Fallback to rule-based
                 errors, root_causes = _rule_based_diagnosis(user_text)
+                used_model = "rule_fallback"
+                confidence = 0.5
         else:
             # Fallback to rule-based if AI fails
             logger.warning("[diagnose_node] AI diagnosis failed, using rules")
             errors, root_causes = _rule_based_diagnosis(user_text)
+            used_model = "rule_fallback"
+            confidence = 0.5
         
         latency_ms = int((time.time() - start_time) * 1000)
         logger.info(f"[diagnose_node] Found {len(errors)} errors, intent={intent}, latency={latency_ms}ms")

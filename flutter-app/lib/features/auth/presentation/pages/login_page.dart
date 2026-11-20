@@ -419,6 +419,11 @@ class _LoginPageState extends State<LoginPage> {
                                     await _persistCredentialPreference();
                                     if (!mounted) return;
                                     setState(() => _failedAttempts = 0);
+                                    if (navigator.canPop()) {
+                                      navigator.popUntil(
+                                        (route) => route.isFirst,
+                                      );
+                                    }
                                   } else if (_isEmailNotVerifiedMessage(
                                     authProvider.errorMessage,
                                   )) {
@@ -641,6 +646,26 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton.icon(
+                        onPressed: authProvider.isLoading
+                            ? null
+                            : () async {
+                                final nav = Navigator.of(context);
+                                await authProvider.enterGuestMode();
+                                if (nav.canPop()) {
+                                  nav.popUntil((route) => route.isFirst);
+                                }
+                              },
+                        icon: const Icon(Icons.explore_outlined),
+                        label: const Text(
+                          'Học thử ngay (Không cần đăng nhập)',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     ),
 
                     if (authProvider.errorMessage != null) ...[

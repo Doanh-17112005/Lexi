@@ -7,7 +7,7 @@ this; the arithmetic only goes wrong on real rows.
 """
 
 import asyncio
-from datetime import date
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
@@ -97,7 +97,7 @@ async def test_daily_streak_reward_pays_once_under_concurrency(db_engine, test_u
     maker = async_sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
     async with maker() as s:
         s.add_all([
-            Streak(user_id=uid, current_streak=3, last_activity_date=date.today()),
+            Streak(user_id=uid, current_streak=3, last_activity_date=datetime.now(timezone.utc).date()),
             UserWallet(user_id=uid, gems=0),
         ])
         await s.commit()

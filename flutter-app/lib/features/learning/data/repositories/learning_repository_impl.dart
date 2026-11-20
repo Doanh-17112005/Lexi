@@ -89,4 +89,14 @@ class LearningRepositoryImpl implements LearningRepository {
       return Left(mapFailure(e));
     }
   }
+
+  @override
+  Future<Either<Failure, void>> markTheoryViewed(String lessonId) async {
+    try {
+      await _remoteDataSource.markTheoryViewed(lessonId);
+      return const Right(null);
+    } catch (e) {
+      return Left(mapFailure(e));
+    }
+  }
 }

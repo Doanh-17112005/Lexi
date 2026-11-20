@@ -33,6 +33,7 @@ from app.services.learner_state import (
     grade_to_observation,
     record_concept_observation,
 )
+from app.services.content_publication_policy import is_vocabulary_learner_visible
 
 
 # A word counts as mastered only once recall is both confident and durable;
@@ -61,6 +62,8 @@ _PLACEHOLDER_DEFINITION_VALUES = (
     "#n/a yet",
     "n/a",
     "n/a yet",
+    "na",
+    "na yet",
     "n.a.",
     "not available",
     "not available yet",
@@ -110,7 +113,8 @@ class VocabularyCRUD:
         difficulty_level: Optional[str] = None,
         tag: Optional[str] = None,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        published_only: bool = True,
     ) -> List[VocabularyItem]:
         """Get vocabulary items with filters"""
         query = select(VocabularyItem)
@@ -139,7 +143,10 @@ class VocabularyCRUD:
                 )
             )
         if difficulty_level:
-            conditions.append(VocabularyItem.difficulty_level == difficulty_level)
+            normalized_level = difficulty_level.strip().upper()
+            if normalized_level not in {lvl.value for lvl in DifficultyLevel}:
+                return []
+            conditions.append(VocabularyItem.difficulty_level == normalized_level)
         conditions.extend(_valid_definition_conditions())
         
         if conditions:
@@ -152,7 +159,7 @@ class VocabularyCRUD:
             VocabularyItem.id,
         )
 
-        if not tag:
+        if not tag and not published_only:
             query = query.offset(offset).limit(limit)
 
         result = await db.execute(query)
@@ -160,6 +167,7 @@ class VocabularyCRUD:
             item
             for item in result.scalars().all()
             if not is_placeholder_definition(item.definition)
+            and (not published_only or is_vocabulary_learner_visible(item.tags))
         ]
         if tag:
             expected_tag = canonical_topic(tag)
@@ -168,6 +176,7 @@ class VocabularyCRUD:
                 for item in items
                 if expected_tag in normalize_all_tags(item.tags)
             ]
+        if tag or published_only:
             return items[offset : offset + limit]
         return items
     
@@ -175,20 +184,72 @@ class VocabularyCRUD:
         self,
         db: AsyncSession,
         search_term: str,
-        limit: int = 20
+        limit: int = 20,
+        offset: int = 0,
+        course_id: Optional[uuid.UUID] = None,
+        lesson_id: Optional[uuid.UUID] = None,
+        difficulty_level: Optional[str] = None,
+        tag: Optional[str] = None,
+        published_only: bool = True,
     ) -> List[VocabularyItem]:
-        """Search vocabulary by word (case-insensitive)"""
-        query = select(VocabularyItem).where(
+        """Search vocabulary by word (case-insensitive) with deterministic pagination."""
+        conditions = [
             VocabularyItem.word.ilike(f"%{search_term}%"),
             *_valid_definition_conditions(),
-        ).limit(limit).order_by(VocabularyItem.word)
-        
+        ]
+        if course_id:
+            course_memberships = (
+                select(LessonVocabularyItem.vocabulary_id)
+                .join(Lesson, Lesson.id == LessonVocabularyItem.lesson_id)
+                .where(Lesson.course_id == course_id)
+            )
+            conditions.append(
+                or_(
+                    VocabularyItem.course_id == course_id,
+                    VocabularyItem.id.in_(course_memberships),
+                )
+            )
+        if lesson_id:
+            lesson_memberships = select(
+                LessonVocabularyItem.vocabulary_id
+            ).where(LessonVocabularyItem.lesson_id == lesson_id)
+            conditions.append(
+                or_(
+                    VocabularyItem.lesson_id == lesson_id,
+                    VocabularyItem.id.in_(lesson_memberships),
+                )
+            )
+        if difficulty_level:
+            normalized_level = difficulty_level.strip().upper()
+            if normalized_level not in {lvl.value for lvl in DifficultyLevel}:
+                return []
+            conditions.append(VocabularyItem.difficulty_level == normalized_level)
+
+        query = (
+            select(VocabularyItem)
+            .where(and_(*conditions))
+            .order_by(func.lower(VocabularyItem.word), VocabularyItem.id)
+        )
+        if not tag and not published_only:
+            query = query.offset(offset).limit(limit)
+
         result = await db.execute(query)
-        return [
+        items = [
             item
             for item in result.scalars().all()
             if not is_placeholder_definition(item.definition)
+            and (not published_only or is_vocabulary_learner_visible(item.tags))
         ]
+        if tag:
+            expected_tag = canonical_topic(tag)
+            items = [
+                item
+                for item in items
+                if expected_tag in normalize_all_tags(item.tags)
+            ]
+        if tag or published_only:
+            return items[offset : offset + limit]
+        return items
 
     async def find_vocabulary_by_word(
         self,
@@ -285,7 +346,11 @@ class VocabularyCRUD:
         if status:
             query = query.where(UserVocabulary.status == status)
 
-        query = query.limit(limit).offset(offset).order_by(UserVocabulary.added_at.desc())
+        query = (
+            query.order_by(UserVocabulary.added_at.desc(), UserVocabulary.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
 
         result = await db.execute(query)
         return list(result.scalars().all())
@@ -415,13 +480,16 @@ class VocabularyCRUD:
         if not unique_ids:
             return []
 
-        valid_ids = list(
-            (
-                await db.scalars(
-                    select(VocabularyItem.id).where(VocabularyItem.id.in_(unique_ids))
+        vocab_rows = (
+            await db.execute(
+                select(VocabularyItem.id, VocabularyItem.tags).where(
+                    VocabularyItem.id.in_(unique_ids)
                 )
-            ).all()
-        )
+            )
+        ).all()
+        valid_ids = [
+            row.id for row in vocab_rows if is_vocabulary_learner_visible(row.tags)
+        ]
         if not valid_ids:
             return []
 
@@ -566,7 +634,8 @@ class VocabularyCRUD:
         db: AsyncSession,
         user_vocabulary_id: uuid.UUID,
         quality: int,
-        time_spent_ms: int = 0
+        time_spent_ms: int = 0,
+        commit: bool = True,
     ) -> UserVocabulary:
         """
         Submit a vocabulary review.
@@ -639,7 +708,10 @@ class VocabularyCRUD:
         )
 
         db.add(review)
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         await db.refresh(user_vocab)
 
         return user_vocab

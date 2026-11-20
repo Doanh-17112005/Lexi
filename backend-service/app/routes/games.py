@@ -8,7 +8,7 @@ import logging
 import random
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
@@ -1150,6 +1150,38 @@ GRAMMAR_QUIZ_BANK: dict = {
             "topic": "reporting_passive",
             "cefr_level": "C1",
         },
+        {
+            "question": "Little ___ that the system had already been patched.",
+            "options": ["did they know", "they knew", "had they known", "knew they"],
+            "correct_answer": "did they know",
+            "explanation": "Negative adverbials like 'little' at the start of a sentence trigger subject-auxiliary inversion.",
+            "topic": "inversion",
+            "cefr_level": "C1",
+        },
+        {
+            "question": "___ from the outside, the building looks much smaller than it is.",
+            "options": ["Seen", "Seeing", "Having seen", "To see"],
+            "correct_answer": "Seen",
+            "explanation": "A past participle clause expresses a passive meaning ('When it is seen from the outside').",
+            "topic": "participle_clauses",
+            "cefr_level": "C1",
+        },
+        {
+            "question": "It is imperative that every applicant ___ the form before Friday.",
+            "options": ["submit", "submits", "submitted", "will submit"],
+            "correct_answer": "submit",
+            "explanation": "Mandative adjectives like 'imperative' take the bare subjunctive base verb.",
+            "topic": "subjunctive",
+            "cefr_level": "C1",
+        },
+        {
+            "question": "Seldom ___ such a clear explanation of the problem.",
+            "options": ["have I heard", "I have heard", "did I heard", "heard I"],
+            "correct_answer": "have I heard",
+            "explanation": "Fronted 'seldom' requires auxiliary-subject inversion.",
+            "topic": "inversion",
+            "cefr_level": "C1",
+        },
     ],
     "C2": [
         {
@@ -1192,8 +1224,66 @@ GRAMMAR_QUIZ_BANK: dict = {
             "topic": "inversion",
             "cefr_level": "C2",
         },
+        {
+            "question": "Were the committee ___ the proposal, funding would start next quarter.",
+            "options": ["to approve", "approved", "approving", "approves"],
+            "correct_answer": "to approve",
+            "explanation": "Inverted second conditional uses 'Were + subject + to-infinitive'.",
+            "topic": "advanced_conditionals",
+            "cefr_level": "C2",
+        },
+        {
+            "question": "So complex ___ that only two specialists could verify it.",
+            "options": ["was the proof", "the proof was", "did the proof", "is the proof was"],
+            "correct_answer": "was the proof",
+            "explanation": "Fronted 'so + adjective' triggers subject-verb inversion.",
+            "topic": "inversion",
+            "cefr_level": "C2",
+        },
+        {
+            "question": "___ it not for the backup generator, the server would have failed.",
+            "options": ["Were", "Had", "Should", "Was"],
+            "correct_answer": "Were",
+            "explanation": "'Were it not for...' is the formal inverted conditional equivalent of 'If it were not for...'.",
+            "topic": "advanced_conditionals",
+            "cefr_level": "C2",
+        },
+        {
+            "question": "Be that as it ___, we must still document every edge case.",
+            "options": ["may", "might", "will", "can"],
+            "correct_answer": "may",
+            "explanation": "'Be that as it may' is an idiomatic C2 concessive subjunctive expression.",
+            "topic": "concession",
+            "cefr_level": "C2",
+        },
     ],
 }
+
+GrammarDifficultyTier = Literal["easy", "medium", "hard"]
+GRAMMAR_DIFFICULTY_TIERS: tuple[str, ...] = ("easy", "medium", "hard")
+GRAMMAR_TIMER_BY_TIER: dict[str, int] = {
+    "easy": 15,
+    "medium": 12,
+    "hard": 9,
+}
+
+
+def _annotate_grammar_tiers() -> None:
+    """Ensure every item in GRAMMAR_QUIZ_BANK carries an explicit difficulty_tier."""
+    for _level, items in GRAMMAR_QUIZ_BANK.items():
+        total = len(items)
+        for idx, item in enumerate(items):
+            if item.get("difficulty_tier") in GRAMMAR_DIFFICULTY_TIERS:
+                continue
+            if idx < total // 3:
+                item["difficulty_tier"] = "easy"
+            elif idx < (2 * total) // 3:
+                item["difficulty_tier"] = "medium"
+            else:
+                item["difficulty_tier"] = "hard"
+
+
+_annotate_grammar_tiers()
 
 # ── Auto-seed helper ───────────────────────────────────────────────────────────
 
@@ -1830,6 +1920,10 @@ async def get_fill_blank(
 async def get_grammar_quiz(
     level: str = Query("A1", description="CEFR level (A1-C2)"),
     topic: Optional[str] = Query(None, description="Grammar topic filter (optional)"),
+    difficulty: Optional[GrammarDifficultyTier] = Query(
+        None,
+        description="Difficulty tier (easy, medium, hard) — distinct from CEFR level",
+    ),
     count: int = Query(10, ge=3, le=15, description="Number of questions"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -1837,27 +1931,29 @@ async def get_grammar_quiz(
     """
     Get grammar quiz questions from the hardcoded question bank.
 
-    Questions are organized by CEFR level and grammar topic:
-      A1 → present_simple, to_be
-      A2 → past_simple, future
-      B1 → present_perfect, modals
-      B2 → passive, conditional
-
-    When topic is provided, only questions matching that topic are returned.
-    Options are shuffled independently on each request.
-    correct_answer is returned as a string (not an index).
-
-    No AI or DB queries needed — fully offline capable.
+    Questions are organized by CEFR level, grammar topic, and difficulty tier
+    (easy | medium | hard). When difficulty is specified, filtering is strict
+    with no cross-tier fallback.
     """
     pool = GRAMMAR_QUIZ_BANK.get(level) or GRAMMAR_QUIZ_BANK.get("B1", [])
 
-    # Filter by topic; fall back to full pool if topic produces no results
+    if difficulty:
+        pool = [q for q in pool if q.get("difficulty_tier") == difficulty]
+        if not pool:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Insufficient grammar questions for difficulty tier '{difficulty}' at level '{level}'",
+            )
+
+    # Filter by topic; fall back to full (tier-filtered) pool if topic produces no results
     if topic:
         filtered = [q for q in pool if q.get("topic") == topic]
         if filtered:
             pool = filtered
 
     selected = random.sample(pool, min(count, len(pool)))
+    timer_seconds = GRAMMAR_TIMER_BY_TIER.get(difficulty or "medium", 12)
+    resolved_tier = difficulty or "mixed"
 
     questions: List[dict] = []
     for i, q in enumerate(selected, start=1):
@@ -1879,6 +1975,7 @@ async def get_grammar_quiz(
             "explanation_detail": explanation_detail,
             "topic": q["topic"],
             "cefr_level": q["cefr_level"],
+            "difficulty_tier": q["difficulty_tier"],
         })
 
     session = await create_game_session(
@@ -1892,16 +1989,21 @@ async def get_grammar_quiz(
                 "answer": question["correct_answer"],
                 "xp_value": XP_BY_LEVEL.get(level, 15),
                 "topic": question["topic"],
+                "difficulty_tier": question["difficulty_tier"],
                 "explanation": question["explanation_detail"],
             }
             for question in questions
         ],
-        session_metadata={"topic": topic or "mixed"},
+        session_metadata={
+            "topic": topic or "mixed",
+            "difficulty_tier": resolved_tier,
+        },
         content_snapshot={
             "game": "grammar_quiz",
             "cefr_level": level,
             "topic": topic or "mixed",
-            "timer_seconds_per_question": 12,
+            "difficulty_tier": resolved_tier,
+            "timer_seconds_per_question": timer_seconds,
             "total_xp": len(questions) * XP_BY_LEVEL.get(level, 15),
             "questions": questions,
             "total": len(questions),
@@ -1913,7 +2015,8 @@ async def get_grammar_quiz(
         "game": "grammar_quiz",
         "cefr_level": level,
         "topic": topic or "mixed",
-        "timer_seconds_per_question": 12,
+        "difficulty_tier": resolved_tier,
+        "timer_seconds_per_question": timer_seconds,
         "total_xp": len(questions) * XP_BY_LEVEL.get(level, 15),
         "questions": questions,
         "total": len(questions),

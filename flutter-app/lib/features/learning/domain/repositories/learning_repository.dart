@@ -26,4 +26,6 @@ abstract class LearningRepository {
   Future<Either<Failure, CourseRoadmap>> getCourseRoadmap(String courseId);
 
   Future<Either<Failure, LessonEntity>> getLessonContent(String lessonId);
+
+  Future<Either<Failure, void>> markTheoryViewed(String lessonId);
 }

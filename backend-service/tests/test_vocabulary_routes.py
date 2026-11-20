@@ -950,3 +950,336 @@ class TestGetWordOfDay:
             response = await client.get(f"{BASE}/word-of-day")
         app.dependency_overrides.clear()
         assert response.status_code == 404
+
+
+
+class TestVocabularyCatalogMultiPagePagination:
+    """Multi-page deterministic pagination tests against isolated test DB."""
+
+    @pytest.mark.asyncio
+    async def test_items_pagination_across_multiple_pages_no_duplicates_or_skips(
+        self, async_client: AsyncClient, db_session
+    ):
+        from app.models.vocabulary import DifficultyLevel, PartOfSpeech, VocabularyItem
+
+        fixed_created = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+        words = [f"catalog_{i:02d}" for i in range(7)]
+        for word in words:
+            db_session.add(
+                VocabularyItem(
+                    word=word,
+                    definition=f"Definition for {word}",
+                    part_of_speech=PartOfSpeech.NOUN,
+                    difficulty_level=DifficultyLevel.A2,
+                    usage_frequency=100,
+                    tags=["travel"],
+                    created_at=fixed_created,
+                )
+            )
+        await db_session.commit()
+
+        seen: list[str] = []
+        for offset in (0, 3, 6):
+            res = await async_client.get(f"{BASE}/items?limit=3&offset={offset}")
+            assert res.status_code == 200
+            seen.extend(item["word"] for item in res.json())
+
+        assert len(seen) == 7
+        assert len(set(seen)) == 7
+        assert set(seen) == set(words)
+
+    @pytest.mark.asyncio
+    async def test_items_search_supports_offset_and_cefr_filter(
+        self, async_client: AsyncClient, db_session
+    ):
+        from app.models.vocabulary import DifficultyLevel, PartOfSpeech, VocabularyItem
+
+        for idx, level in enumerate(
+            [
+                DifficultyLevel.B1,
+                DifficultyLevel.B1,
+                DifficultyLevel.B1,
+                DifficultyLevel.A1,
+                DifficultyLevel.B1,
+            ]
+        ):
+            db_session.add(
+                VocabularyItem(
+                    word=f"spark_{idx}",
+                    definition=f"Meaning {idx}",
+                    part_of_speech=PartOfSpeech.VERB,
+                    difficulty_level=level,
+                    tags=["science"],
+                )
+            )
+        await db_session.commit()
+
+        page1 = await async_client.get(
+            f"{BASE}/items?search=spark_&difficulty_level=B1&limit=2&offset=0"
+        )
+        page2 = await async_client.get(
+            f"{BASE}/items?search=spark_&difficulty_level=B1&limit=2&offset=2"
+        )
+        assert page1.status_code == 200
+        assert page2.status_code == 200
+        w1 = [item["word"] for item in page1.json()]
+        w2 = [item["word"] for item in page2.json()]
+        assert len(w1) == 2
+        assert len(w2) == 2
+        assert set(w1).isdisjoint(set(w2))
+        assert set(w1 + w2) == {"spark_0", "spark_1", "spark_2", "spark_4"}
+
+    @pytest.mark.asyncio
+    async def test_collection_pagination_with_tied_added_at_and_exact_has_more(
+        self, async_client: AsyncClient, auth_headers: dict, db_session, test_user
+    ):
+        from app.models.vocabulary import (
+            DifficultyLevel,
+            PartOfSpeech,
+            UserVocabulary,
+            VocabularyItem,
+        )
+
+        test_user.has_seeded_basic_words = True
+        db_session.add(test_user)
+
+        same_time = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
+        created_words = [f"coll_{i}" for i in range(4)]
+        for word in created_words:
+            vocab = VocabularyItem(
+                word=word,
+                definition=f"Def {word}",
+                part_of_speech=PartOfSpeech.NOUN,
+                difficulty_level=DifficultyLevel.A1,
+            )
+            db_session.add(vocab)
+            await db_session.flush()
+            db_session.add(
+                UserVocabulary(
+                    user_id=test_user.id,
+                    vocabulary_id=vocab.id,
+                    added_at=same_time,
+                )
+            )
+        await db_session.commit()
+
+        p1 = await async_client.get(
+            f"{BASE}/collection?limit=2&offset=0", headers=auth_headers
+        )
+        p2 = await async_client.get(
+            f"{BASE}/collection?limit=2&offset=2", headers=auth_headers
+        )
+        assert p1.status_code == 200
+        assert p2.status_code == 200
+        d1, d2 = p1.json(), p2.json()
+        assert d1["total"] == 4
+        assert d1["has_more"] is True
+        assert d2["has_more"] is False
+        words1 = [x["vocabulary"]["word"] for x in d1["items"]]
+        words2 = [x["vocabulary"]["word"] for x in d2["items"]]
+        assert len(words1) == 2 and len(words2) == 2
+        assert set(words1).isdisjoint(set(words2))
+        assert set(words1 + words2) == set(created_words)
+
+
+class TestVocabularyTopicTaxonomyAndFilters:
+    """T03 regression tests for canonical topic taxonomy and level/tag filtering."""
+
+    def test_canonical_topics_match_ui_and_aliases(self):
+        from app.services.vocabulary_catalog_policy import (
+            CANONICAL_TOPICS,
+            canonical_topic,
+        )
+
+        assert CANONICAL_TOPICS == (
+            "general",
+            "travel",
+            "business",
+            "daily",
+            "science",
+            "technology",
+        )
+        assert canonical_topic("daily_life") == "daily"
+        assert canonical_topic("daily-life") == "daily"
+        assert canonical_topic(" daily life ") == "daily"
+        assert canonical_topic(" Travel ") == "travel"
+
+    @pytest.mark.asyncio
+    async def test_items_filter_level_only_topic_only_and_combined(
+        self, async_client: AsyncClient, db_session
+    ):
+        from app.models.vocabulary import DifficultyLevel, PartOfSpeech, VocabularyItem
+
+        seed_rows = [
+            ("t03_gen", DifficultyLevel.A1, ["general"]),
+            ("t03_trv", DifficultyLevel.A2, ["travel"]),
+            ("t03_biz", DifficultyLevel.B1, {"topic": "business"}),
+            ("t03_dly1", DifficultyLevel.B1, ["daily"]),
+            ("t03_dly2", DifficultyLevel.B1, {"topic": "daily_life"}),
+            ("t03_dly3", DifficultyLevel.A1, ["daily-life"]),
+            ("t03_sci", DifficultyLevel.B2, ["science"]),
+            ("t03_tec", DifficultyLevel.C1, ["technology"]),
+        ]
+        for word, level, tags in seed_rows:
+            db_session.add(
+                VocabularyItem(
+                    word=word,
+                    definition=f"Valid definition for {word}",
+                    part_of_speech=PartOfSpeech.NOUN,
+                    difficulty_level=level,
+                    tags=tags,
+                )
+            )
+        await db_session.commit()
+
+        # Level-only (case-insensitive normalization)
+        lvl_res = await async_client.get(f"{BASE}/items?difficulty_level=b1")
+        assert lvl_res.status_code == 200
+        assert {item["word"] for item in lvl_res.json()} == {
+            "t03_biz",
+            "t03_dly1",
+            "t03_dly2",
+        }
+
+        # Topic-only with alias
+        tag_res = await async_client.get(f"{BASE}/items?tag=daily_life")
+        assert tag_res.status_code == 200
+        assert {item["word"] for item in tag_res.json()} == {
+            "t03_dly1",
+            "t03_dly2",
+            "t03_dly3",
+        }
+        assert all(item["tags"] == ["daily"] for item in tag_res.json())
+
+        # Combined level + topic + search
+        combo_res = await async_client.get(
+            f"{BASE}/items?search=t03_&difficulty_level=b1&tag=daily-life"
+        )
+        assert combo_res.status_code == 200
+        assert {item["word"] for item in combo_res.json()} == {
+            "t03_dly1",
+            "t03_dly2",
+        }
+
+    @pytest.mark.asyncio
+    async def test_items_invalid_difficulty_level_returns_422(
+        self, async_client: AsyncClient
+    ):
+        response = await async_client.get(f"{BASE}/items?difficulty_level=invalid")
+        assert response.status_code == 422
+
+
+class TestVocabularyT04ReviewIdempotencyFlow:
+    """T04 integration tests for due -> review -> retry idempotency -> stats."""
+
+    @pytest.mark.asyncio
+    async def test_due_review_retry_idempotency_and_stats(
+        self,
+        async_client: AsyncClient,
+        auth_headers: dict,
+        db_session,
+        test_user,
+    ):
+        from sqlalchemy import func, select
+
+        from app.models.games import XPTransaction
+        from app.models.vocabulary import (
+            DifficultyLevel,
+            PartOfSpeech,
+            UserVocabulary,
+            VocabularyItem,
+            VocabularyReview,
+        )
+
+        test_user.has_seeded_basic_words = True
+        initial_xp = test_user.total_xp or 0
+        db_session.add(test_user)
+
+        vocab = VocabularyItem(
+            word="t04_resilient",
+            definition="Able to recover quickly from setbacks.",
+            part_of_speech=PartOfSpeech.ADJECTIVE,
+            difficulty_level=DifficultyLevel.B2,
+            tags={"topic": ["general"], "qa_status": "NEEDS_REVIEW"},
+        )
+        db_session.add(vocab)
+        await db_session.flush()
+
+        user_vocab = UserVocabulary(
+            user_id=test_user.id,
+            vocabulary_id=vocab.id,
+            next_review_date=datetime.now(UTC) - timedelta(hours=1),
+        )
+        db_session.add(user_vocab)
+        await db_session.commit()
+
+        # 1. Verify due list includes the item
+        due_before = await async_client.get(f"{BASE}/due?limit=20", headers=auth_headers)
+        assert due_before.status_code == 200
+        assert due_before.json()["total_due"] >= 1
+        assert any(
+            item["id"] == str(user_vocab.id)
+            for item in due_before.json()["items"]
+        )
+
+        # 2. Submit review with idempotency_key
+        idem_key = f"t04-idem-{uuid.uuid4()}"
+        first_res = await async_client.post(
+            f"{BASE}/review/{user_vocab.id}",
+            headers=auth_headers,
+            json={
+                "quality": 4,
+                "time_spent_ms": 1800,
+                "idempotency_key": idem_key,
+            },
+        )
+        assert first_res.status_code == 200
+        first_data = first_res.json()
+        assert first_data["xp_awarded"] == 13  # 5 + 4*2 + 0
+        assert first_data["next_review_in_days"] >= 1
+        assert first_data["user_vocabulary"]["total_reviews"] == 1
+
+        # 3. Retry identical request (network retry) — must NOT double XP or reviews
+        retry_res = await async_client.post(
+            f"{BASE}/review/{user_vocab.id}",
+            headers=auth_headers,
+            json={
+                "quality": 4,
+                "time_spent_ms": 1800,
+                "idempotency_key": idem_key,
+            },
+        )
+        assert retry_res.status_code == 200
+        assert retry_res.json() == first_data
+
+        # 4. Verify DB counts & user XP incremented exactly once
+        await db_session.refresh(test_user)
+        assert test_user.total_xp == initial_xp + 13
+
+        review_count = await db_session.scalar(
+            select(func.count(VocabularyReview.id)).where(
+                VocabularyReview.user_vocabulary_id == user_vocab.id
+            )
+        )
+        xp_tx_count = await db_session.scalar(
+            select(func.count(XPTransaction.id)).where(
+                XPTransaction.user_id == test_user.id,
+                XPTransaction.source == "vocab_review",
+                XPTransaction.source_id == f"{user_vocab.id}:1",
+            )
+        )
+        assert review_count == 1
+        assert xp_tx_count == 1
+
+        # 5. Stats reflect 1 review and due list no longer includes this scheduled item
+        stats_res = await async_client.get(f"{BASE}/stats", headers=auth_headers)
+        assert stats_res.status_code == 200
+        assert stats_res.json()["total"] >= 1
+        assert stats_res.json()["due_for_review"] == 0
+
+        due_after = await async_client.get(f"{BASE}/due?limit=20", headers=auth_headers)
+        assert due_after.status_code == 200
+        assert all(
+            item["id"] != str(user_vocab.id)
+            for item in due_after.json()["items"]
+        )

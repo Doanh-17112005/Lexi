@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:lexilingo_app/features/mistakes/data/mistake_notebook_repository.dart';
+import 'package:lexilingo_app/features/mistakes/domain/mistake_notebook_entry.dart';
+import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_tags.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/quiz_question_entity.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/review_session_entity.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/user_vocabulary_entity.dart';
@@ -18,6 +22,7 @@ class _WordProgress {
   int correct = 0;
   int timeSpentMs = 0;
   bool submitted = false;
+  String? idempotencyKey;
 
   _WordProgress({required this.card, required this.questionCount});
 }
@@ -35,11 +40,13 @@ class QuizProvider extends ChangeNotifier {
   final GetDueVocabularyUseCase getDueVocabularyUseCase;
   final SubmitReviewUseCase submitReviewUseCase;
   final VocabularyRepository vocabularyRepository;
+  final MistakeNotebookRepository? mistakeRepository;
 
   QuizProvider({
     required this.getDueVocabularyUseCase,
     required this.submitReviewUseCase,
     required this.vocabularyRepository,
+    this.mistakeRepository,
   });
 
   final Random _random = Random();
@@ -53,6 +60,7 @@ class QuizProvider extends ChangeNotifier {
 
   final Map<String, _WordProgress> _wordProgress = {};
   final List<Future<void>> _pendingSubmits = [];
+  final List<_WordProgress> _failedSubmissions = [];
   DateTime? _questionStartTime;
   DateTime? _startedAt;
 
@@ -66,6 +74,7 @@ class QuizProvider extends ChangeNotifier {
   int get totalQuestions => _questions.length;
   int get currentQuestionNumber => _currentIndex + 1;
   int get totalXpEarned => _totalXpEarned;
+  int get failedSubmissionCount => _failedSubmissions.length;
 
   QuizQuestionEntity? get currentQuestion =>
       _currentIndex < _questions.length ? _questions[_currentIndex] : null;
@@ -167,8 +176,9 @@ class QuizProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final canonicalTag = normalizeVocabularyTopic(tag) ?? tag;
       final itemsResult = await vocabularyRepository.getVocabularyItems(
-        tag: tag,
+        tag: canonicalTag,
         limit: limit,
       );
       await itemsResult.fold(
@@ -399,6 +409,29 @@ class QuizProvider extends ChangeNotifier {
 
     _selectedIndex = optionIndex;
     final isCorrect = question.options[optionIndex].isCorrect;
+    if (!isCorrect && mistakeRepository != null) {
+      final correctIdx = question.correctIndex;
+      final correctText = correctIdx != null
+          ? question.options[correctIdx].text
+          : question.card.vocabularyItem.definition;
+      final vocab = question.card.vocabularyItem;
+      unawaited(
+        mistakeRepository!.saveMistake(
+          MistakeNotebookEntry(
+            id: 'vocab_quiz_${question.vocabularyId}_${question.direction.name}',
+            sourceType: 'vocabulary_quiz',
+            sourceId: '${question.vocabularyId}:${question.direction.name}',
+            sourceTitle: 'Vocabulary Quiz - ${vocab.word}',
+            question: question.prompt,
+            selectedAnswer: question.options[optionIndex].text,
+            correctAnswer: correctText,
+            explanation: '${vocab.word}: ${vocab.definition}',
+            skill: 'vocabulary',
+            createdAt: DateTime.now(),
+          ),
+        ),
+      );
+    }
 
     final progress = _wordProgress[question.card.userVocabulary.id];
     if (progress != null) {
@@ -426,17 +459,36 @@ class QuizProvider extends ChangeNotifier {
 
   Future<void> _submitWord(_WordProgress progress) async {
     final quality = _qualityFor(progress);
+    final idempotencyKey = progress.idempotencyKey ??=
+        'qz_${progress.card.userVocabulary.id}_${_startedAt?.millisecondsSinceEpoch ?? 0}';
     final result = await submitReviewUseCase(
       SubmitReviewParams(
         userVocabularyId: progress.card.userVocabulary.id,
         quality: quality,
         timeSpentMs: progress.timeSpentMs,
+        idempotencyKey: idempotencyKey,
       ),
     );
     result.fold(
-      (failure) => debugPrint('Quiz review submit failed: ${failure.message}'),
-      (review) => _totalXpEarned += review.xpEarned,
+      (failure) {
+        if (!_failedSubmissions.contains(progress)) {
+          _failedSubmissions.add(progress);
+        }
+        debugPrint('Quiz review submit failed: ${failure.message}');
+      },
+      (review) {
+        _failedSubmissions.remove(progress);
+        _totalXpEarned += review.xpEarned;
+      },
     );
+  }
+
+  /// Retry any failed review submissions using their original idempotency keys.
+  Future<void> retryFailedSubmissions() async {
+    if (_failedSubmissions.isEmpty) return;
+    final toRetry = List<_WordProgress>.from(_failedSubmissions);
+    await Future.wait(toRetry.map(_submitWord));
+    notifyListeners();
   }
 
   ReviewQuality _qualityFor(_WordProgress progress) {
@@ -478,6 +530,7 @@ class QuizProvider extends ChangeNotifier {
     _selectedIndex = null;
     _wordProgress.clear();
     _pendingSubmits.clear();
+    _failedSubmissions.clear();
     _questionStartTime = null;
     _startedAt = null;
     _wordCount = 0;

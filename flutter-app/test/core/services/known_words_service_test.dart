@@ -57,6 +57,7 @@ class _FakeVocabularyRepository implements VocabularyRepository {
     String userVocabularyId,
     ReviewQuality quality, {
     int? timeSpentMs,
+    String? idempotencyKey,
   }) => throw UnimplementedError();
 
   @override

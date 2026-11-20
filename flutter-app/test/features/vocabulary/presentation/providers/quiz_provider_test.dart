@@ -1,6 +1,8 @@
 import 'package:dartz/dartz.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lexilingo_app/core/error/failures.dart';
+import 'package:lexilingo_app/features/mistakes/data/mistake_notebook_repository.dart';
+import 'package:lexilingo_app/features/mistakes/domain/mistake_notebook_entry.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/quiz_question_entity.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/review_session_entity.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/entities/user_vocabulary_entity.dart';
@@ -103,6 +105,7 @@ class _FakeQuizRepository extends Fake implements VocabularyRepository {
     String userVocabularyId,
     ReviewQuality quality, {
     int? timeSpentMs,
+    String? idempotencyKey,
   }) async {
     submissions.add((userVocabularyId, quality));
     return Right(
@@ -253,5 +256,46 @@ void main() {
       expect(provider.errorMessage, isNotNull);
       provider.dispose();
     });
+
+    test('records wrong answers to mistake notebook and skips correct ones', () async {
+      final mistakeRepo = _InMemoryMistakeRepo();
+      final provider = QuizProvider(
+        getDueVocabularyUseCase: GetDueVocabularyUseCase(repo),
+        submitReviewUseCase: SubmitReviewUseCase(repo),
+        vocabularyRepository: repo,
+        mistakeRepository: mistakeRepo,
+      );
+      await provider.startQuizSession();
+
+      final firstQ = provider.currentQuestion!;
+      final firstWrong = (firstQ.correctIndex! + 1) % firstQ.options.length;
+      provider.answer(firstWrong);
+      provider.next();
+
+      final secondQ = provider.currentQuestion!;
+      provider.answer(secondQ.correctIndex!);
+
+      await pumpEventQueue();
+      expect(mistakeRepo.saved.length, 1);
+      expect(mistakeRepo.saved.first.sourceType, 'vocabulary_quiz');
+      expect(mistakeRepo.saved.first.question, firstQ.prompt);
+      expect(
+        mistakeRepo.saved.first.selectedAnswer,
+        firstQ.options[firstWrong].text,
+      );
+      provider.dispose();
+    });
   });
+}
+
+class _InMemoryMistakeRepo extends MistakeNotebookRepository {
+  final List<MistakeNotebookEntry> saved = [];
+
+  @override
+  Future<List<MistakeNotebookEntry>> saveMistake(
+    MistakeNotebookEntry entry,
+  ) async {
+    saved.add(entry);
+    return List.unmodifiable(saved);
+  }
 }

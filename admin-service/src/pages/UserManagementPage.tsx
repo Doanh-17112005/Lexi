@@ -81,10 +81,12 @@ export default function UserManagementPage() {
 
   // Handlers
   const handleFilterChange = (newFilters: Partial<UserFilters>) => {
+    setSelectedUsers(new Set());
     setFilters((prev) => ({ ...prev, ...newFilters, page: 1 }));
   };
   
   const handlePageChange = (page: number) => {
+    setSelectedUsers(new Set());
     setFilters((prev) => ({ ...prev, page }));
   };
   
@@ -160,6 +162,8 @@ export default function UserManagementPage() {
   const pageTotalXP = users.reduce((sum, u) => sum + (u.total_xp || 0), 0);
   const pageAvgXP = users.length ? Math.round(pageTotalXP / users.length) : 0;
 
+  const mutationError = statusMutation.error || bulkActionMutation.error || deleteMutation.error;
+
   return (
     <div className="stack">
       {/* Header */}
@@ -188,6 +192,12 @@ export default function UserManagementPage() {
           </div>
         )}
       </div>
+
+      {mutationError && (
+        <div className="form-error">
+          {mutationError instanceof Error ? mutationError.message : 'Thao tác thất bại'}
+        </div>
+      )}
       
       {/* Stats Cards */}
       {data && (
@@ -269,7 +279,7 @@ export default function UserManagementPage() {
                   <th style={{ padding: '12px 16px', textAlign: 'left', width: 40 }}>
                     <input
                       type="checkbox"
-                      checked={data?.users && selectedUsers.size === data.users.length}
+                      checked={Boolean(data?.users?.length && selectedUsers.size === data.users.length)}
                       onChange={handleSelectAll}
                       style={{ cursor: 'pointer' }}
                     />
@@ -296,7 +306,7 @@ export default function UserManagementPage() {
                     <td style={{ padding: '16px' }}>
                       <div className="cluster" style={{ gap: 12, alignItems: 'center' }}>
                         <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg, var(--accent), #ff8c42)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: 16 }}>
-                          {(user.display_name || user.email)[0].toUpperCase()}
+                          {((user.display_name || user.email || '?').trim()[0] || '?').toUpperCase()}
                         </div>
                         <div>
                           <div className="table-title">{user.display_name || user.email.split('@')[0]}</div>

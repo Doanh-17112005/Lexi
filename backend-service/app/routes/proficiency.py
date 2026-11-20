@@ -18,10 +18,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm.attributes import flag_modified
 from datetime import datetime, timezone
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.models.course import Course
 from app.models.user import User
 from app.models.progress import Streak
 from app.models.proficiency import (
@@ -49,6 +51,14 @@ from app.schemas.proficiency import (
 from app.services.proficiency_service import (
     LEVEL_DIFFICULTY_MULTIPLIER,
     ProficiencyService,
+)
+from app.services.six_skill_placement import (
+    MAX_SIX_SKILL_SCORE,
+    PLACEMENT_DISCLAIMER,
+    SIX_SKILL_NAMES,
+    SIX_SKILL_PLACEMENT_TASKS,
+    evaluate_six_skill_submission,
+    sanitize_placement_task,
 )
 from app.services.rank_service import apply_rank_info_to_user, calculate_rank
 from app.services.level_service import calculate_numeric_level
@@ -1063,7 +1073,335 @@ async def submit_placement_test(
         "rank": new_rank.rank.value,
         "rank_name": new_rank.name,
         "details": details,
+        "disclaimer": PLACEMENT_DISCLAIMER,
     }
+
+
+class SixSkillAnswerPayload(BaseModel):
+    task_id: str = Field(..., min_length=1, max_length=64)
+    selected_option: Optional[int] = Field(default=None, ge=0, le=3)
+    text_response: Optional[str] = Field(default=None, max_length=2000)
+
+
+class SixSkillSubmitRequest(BaseModel):
+    answers: List[SixSkillAnswerPayload] = Field(default_factory=list)
+    time_taken_seconds: int = Field(default=0, ge=0, le=7200)
+    idempotency_key: Optional[str] = Field(default=None, max_length=128)
+
+
+def _normalize_cefr(raw_level: Optional[str]) -> str:
+    val = (raw_level or "A1").strip().upper()
+    return val if val in {"A1", "A2", "B1", "B2", "C1", "C2"} else "A1"
+
+
+@router.post("/placement-test/start", response_model=dict)
+async def start_six_skill_placement_test(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Start a persisted 6-skill placement test attempt without exposing answer keys."""
+    now = datetime.now(timezone.utc)
+    normalized_level = _normalize_cefr(current_user.level)
+    attempt = LevelAssessmentTest(
+        user_id=current_user.id,
+        test_type="six_skill_pending",
+        assessed_level=normalized_level,
+        overall_score=0.0,
+        skill_scores={
+            "status": "in_progress",
+            "answers": {},
+            "tasks_version": "6skill-v1",
+        },
+        questions_count=len(SIX_SKILL_PLACEMENT_TASKS),
+        correct_count=0,
+        started_at=now,
+        completed_at=now,
+        level_changed=False,
+        previous_level=normalized_level,
+    )
+    db.add(attempt)
+    await db.commit()
+    await db.refresh(attempt)
+
+    return {
+        "attempt_id": str(attempt.id),
+        "status": "in_progress",
+        "skills": list(SIX_SKILL_NAMES),
+        "total_questions": len(SIX_SKILL_PLACEMENT_TASKS),
+        "max_score": MAX_SIX_SKILL_SCORE,
+        "disclaimer": PLACEMENT_DISCLAIMER,
+        "questions": [sanitize_placement_task(t) for t in SIX_SKILL_PLACEMENT_TASKS],
+    }
+
+
+@router.put("/placement-test/{attempt_id}/answer", response_model=dict)
+@router.patch("/placement-test/{attempt_id}/answer", response_model=dict)
+async def save_six_skill_placement_answer(
+    attempt_id: UUID,
+    payload: SixSkillAnswerPayload,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Persist an answer draft for an in-progress 6-skill placement attempt."""
+    valid_ids = {t["id"] for t in SIX_SKILL_PLACEMENT_TASKS}
+    if payload.task_id not in valid_ids:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown placement task_id")
+
+    attempt_res = await db.execute(
+        select(LevelAssessmentTest)
+        .where(
+            and_(
+                LevelAssessmentTest.id == attempt_id,
+                LevelAssessmentTest.user_id == current_user.id,
+            )
+        )
+        .with_for_update()
+    )
+    attempt = attempt_res.scalar_one_or_none()
+    if not attempt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Placement attempt not found")
+    if attempt.test_type != "six_skill_pending":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Placement attempt has already been submitted",
+        )
+
+    state = dict(attempt.skill_scores or {})
+    answers = dict(state.get("answers") or {})
+    answers[payload.task_id] = {
+        "selected_option": payload.selected_option,
+        "text_response": payload.text_response,
+    }
+    state["answers"] = answers
+    attempt.skill_scores = state
+    flag_modified(attempt, "skill_scores")
+    await db.commit()
+
+    return {
+        "attempt_id": str(attempt.id),
+        "saved_task_id": payload.task_id,
+        "answered_count": len(answers),
+        "total_questions": len(SIX_SKILL_PLACEMENT_TASKS),
+    }
+
+
+@router.get("/placement-test/{attempt_id}", response_model=dict)
+async def get_six_skill_placement_attempt(
+    attempt_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Resume an in-progress 6-skill placement attempt or retrieve completed results."""
+    attempt_res = await db.execute(
+        select(LevelAssessmentTest).where(
+            and_(
+                LevelAssessmentTest.id == attempt_id,
+                LevelAssessmentTest.user_id == current_user.id,
+            )
+        )
+    )
+    attempt = attempt_res.scalar_one_or_none()
+    if not attempt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Placement attempt not found")
+
+    state = dict(attempt.skill_scores or {})
+    if attempt.test_type == "six_skill_pending":
+        return {
+            "attempt_id": str(attempt.id),
+            "status": "in_progress",
+            "skills": list(SIX_SKILL_NAMES),
+            "total_questions": len(SIX_SKILL_PLACEMENT_TASKS),
+            "max_score": MAX_SIX_SKILL_SCORE,
+            "saved_answers": state.get("answers", {}),
+            "disclaimer": PLACEMENT_DISCLAIMER,
+            "questions": [sanitize_placement_task(t) for t in SIX_SKILL_PLACEMENT_TASKS],
+        }
+
+    return {
+        "attempt_id": str(attempt.id),
+        "status": "completed",
+        **dict(state.get("result_payload") or {}),
+    }
+
+
+@router.post("/placement-test/{attempt_id}/submit", response_model=dict)
+async def submit_six_skill_placement_attempt(
+    attempt_id: UUID,
+    payload: SixSkillSubmitRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Score and finalize a 6-skill placement attempt with duplicate-submit protection."""
+    attempt_res = await db.execute(
+        select(LevelAssessmentTest)
+        .where(
+            and_(
+                LevelAssessmentTest.id == attempt_id,
+                LevelAssessmentTest.user_id == current_user.id,
+            )
+        )
+        .with_for_update()
+    )
+    attempt = attempt_res.scalar_one_or_none()
+    if not attempt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Placement attempt not found")
+
+    state = dict(attempt.skill_scores or {})
+    if attempt.test_type != "six_skill_pending":
+        stored_idem = state.get("idempotency_key")
+        if payload.idempotency_key and stored_idem and payload.idempotency_key == stored_idem:
+            return {
+                **dict(state.get("result_payload") or {}),
+                "idempotent_replay": True,
+            }
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Placement attempt has already been submitted",
+        )
+
+    merged_answers: Dict[str, Dict[str, Any]] = dict(state.get("answers") or {})
+    for item in payload.answers:
+        merged_answers[item.task_id] = {
+            "selected_option": item.selected_option,
+            "text_response": item.text_response,
+        }
+
+    evaluated = evaluate_six_skill_submission(merged_answers)
+    assessed_level = evaluated["assessed_level"]
+    old_level = _normalize_cefr(current_user.level)
+    level_changed = old_level != assessed_level
+    now = datetime.now(timezone.utc)
+
+    prof_res = await db.execute(
+        select(UserProficiencyProfile).where(
+            UserProficiencyProfile.user_id == current_user.id
+        )
+    )
+    profile = prof_res.scalar_one_or_none()
+    if profile is None:
+        had_prior_level_change = False
+        profile = UserProficiencyProfile(
+            user_id=current_user.id,
+            assessed_level=assessed_level,
+            overall_score=evaluated["score_percentage"],
+            last_assessment_at=now,
+            last_level_change_at=now if level_changed else None,
+        )
+        db.add(profile)
+        await db.flush()
+    else:
+        had_prior_level_change = profile.last_level_change_at is not None
+        profile.assessed_level = assessed_level
+        profile.overall_score = evaluated["score_percentage"]
+        profile.last_assessment_at = now
+        if level_changed:
+            profile.last_level_change_at = now
+
+    for skill_name, skill_score_val in evaluated["skill_scores"].items():
+        skill_enum = ModelSkillType(skill_name)
+        ss_res = await db.execute(
+            select(UserSkillScore).where(
+                and_(
+                    UserSkillScore.profile_id == profile.id,
+                    UserSkillScore.skill == skill_enum,
+                )
+            )
+        )
+        ss = ss_res.scalar_one_or_none()
+        if ss is None:
+            ss = UserSkillScore(
+                profile_id=profile.id,
+                skill=skill_enum,
+                score=skill_score_val,
+                confidence=0.6,
+                last_updated=now,
+            )
+            db.add(ss)
+        else:
+            ss.score = round((float(ss.score or 0.0) + skill_score_val) / 2.0, 1) if (ss.exercises_completed or 0) > 0 else skill_score_val
+            ss.confidence = max(float(ss.confidence or 0.0), 0.6)
+            ss.last_updated = now
+
+    current_user.level = assessed_level
+    new_rank = calculate_rank(
+        numeric_level=current_user.numeric_level or 1,
+        proficiency_level=assessed_level,
+    )
+    apply_rank_info_to_user(current_user, new_rank)
+
+    if level_changed:
+        db.add(
+            UserLevelHistory(
+                profile_id=profile.id,
+                previous_level=old_level,
+                new_level=assessed_level,
+                change_type="promotion" if had_prior_level_change else "initial",
+                overall_score=evaluated["score_percentage"],
+                skill_scores_snapshot=evaluated["skill_scores"],
+                reason="6-skill placement test assessment",
+                triggered_at=now,
+            )
+        )
+
+    courses_res = await db.execute(
+        select(Course)
+        .where(
+            and_(
+                Course.is_published == True,
+                Course.level == assessed_level,
+            )
+        )
+        .limit(3)
+    )
+    rec_courses = [
+        {
+            "id": str(c.id),
+            "title": c.title,
+            "level": c.level,
+            "total_lessons": c.total_lessons,
+        }
+        for c in courses_res.scalars().all()
+    ]
+
+    result_payload = {
+        "attempt_id": str(attempt.id),
+        "assessed_level": assessed_level,
+        "total_score": evaluated["total_score"],
+        "max_score": evaluated["max_score"],
+        "score_percentage": evaluated["score_percentage"],
+        "correct_count": evaluated["objective_correct"],
+        "total_questions": evaluated["objective_total"],
+        "skill_scores": evaluated["skill_scores"],
+        "weakest_skills": evaluated["weakest_skills"],
+        "recommendations": evaluated["recommendations"],
+        "recommended_courses": rec_courses,
+        "level_changed": level_changed,
+        "previous_level": old_level,
+        "rank": new_rank.rank.value,
+        "rank_name": new_rank.name,
+        "details": evaluated["details"],
+        "disclaimer": evaluated["disclaimer"],
+        "idempotent_replay": False,
+    }
+
+    attempt.test_type = "six_skill"
+    attempt.assessed_level = assessed_level
+    attempt.overall_score = evaluated["score_percentage"]
+    attempt.skill_scores = {
+        "scores": evaluated["skill_scores"],
+        "idempotency_key": payload.idempotency_key,
+        "result_payload": result_payload,
+    }
+    attempt.correct_count = evaluated["objective_correct"]
+    attempt.time_taken_seconds = payload.time_taken_seconds
+    attempt.completed_at = now
+    attempt.level_changed = level_changed
+    flag_modified(attempt, "skill_scores")
+
+    await db.commit()
+    await invalidate_learner_card(current_user.id)
+
+    return result_payload
 
 
 @router.post("/exam-gated/submit", response_model=ExamGatedProgressionResponse)

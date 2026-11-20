@@ -37,6 +37,28 @@ def _decode_audio_file(path: str) -> Tuple[np.ndarray, int]:
 
         return decode_audio(path, sampling_rate=16000), 16000
     except Exception:
+        logger.debug("Falling back to stdlib wave / scipy WAV decoder", exc_info=True)
+
+    try:
+        import wave
+
+        with wave.open(path, "rb") as wf:
+            channels = wf.getnchannels()
+            sample_width = wf.getsampwidth()
+            sample_rate = wf.getframerate()
+            frames = wf.readframes(wf.getnframes())
+        if sample_width == 2:
+            raw = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        elif sample_width == 4:
+            raw = np.frombuffer(frames, dtype=np.int32).astype(np.float32) / 2147483648.0
+        elif sample_width == 1:
+            raw = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+        else:
+            raise ValueError(f"Unsupported WAV sample width: {sample_width}")
+        if channels > 1:
+            raw = raw.reshape(-1, channels).mean(axis=1)
+        return raw, int(sample_rate)
+    except Exception:
         logger.debug("Falling back to scipy WAV decoder", exc_info=True)
 
     try:
@@ -141,6 +163,23 @@ async def assess_pronunciation(
         }
     except HTTPException:
         raise
+    except (ModuleNotFoundError, ImportError, RuntimeError) as exc:
+        detail = str(exc) or "Pronunciation engine unavailable"
+        logger.warning("Pronunciation engine unavailable: %s", detail)
+        await emit_ai_audit_event(
+            {
+                "request_id": request_id,
+                "user_id": current_user.user_id,
+                "endpoint": "stt.assess_pronunciation",
+                "status": "error",
+                "error": detail,
+                "latency_ms": int((time.time() - start_time) * 1000),
+            }
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Pronunciation assessment unavailable: {detail}",
+        ) from exc
     except Exception as exc:
         logger.error("Pronunciation assessment error: %s", exc, exc_info=True)
         await emit_ai_audit_event(

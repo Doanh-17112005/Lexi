@@ -112,7 +112,7 @@ Set<String> _discover(Directory root) {
   ];
   for (final file in lib.listSync(recursive: true).whereType<File>()) {
     if (!file.path.endsWith('.dart')) continue;
-    final path = file.path.substring(root.path.length + 1);
+    final path = file.path.substring(root.path.length + 1).replaceAll('\\', '/');
     if (excluded.any((prefix) => path.startsWith(prefix))) continue;
     final source = file.readAsStringSync();
     for (final pattern in patterns) {

@@ -47,6 +47,7 @@ class HomeProvider with ChangeNotifier {
   // State: Weekly Progress (Task 1.3)
   WeeklyProgressEntity _weeklyProgress = WeeklyProgressEntity.empty();
   bool _isLoadingWeekly = false;
+  String? _weeklyError;
 
   // State: Word of the Day
   VocabularyItemEntity? _wordOfDay;
@@ -76,6 +77,7 @@ class HomeProvider with ChangeNotifier {
   /// Get weekly progress entity for detailed display
   WeeklyProgressEntity get weeklyProgress => _weeklyProgress;
   bool get isLoadingWeekly => _isLoadingWeekly;
+  String? get weeklyError => _weeklyError;
 
   DailyGoal? get todayGoal => _todayGoal;
   VocabularyItemEntity? get wordOfDay => _wordOfDay;
@@ -105,17 +107,20 @@ class HomeProvider with ChangeNotifier {
     if (getWeeklyProgressUseCase == null) return;
 
     _isLoadingWeekly = true;
+    _weeklyError = null;
     notifyListeners();
 
     final result = await getWeeklyProgressUseCase!.call();
 
     result.fold(
       (failure) {
-        // Graceful degradation - keep empty data
+        // Keep empty data while exposing recoverable error state for UI retry.
         _weeklyProgress = WeeklyProgressEntity.empty();
+        _weeklyError = failure.message;
       },
       (data) {
         _weeklyProgress = data;
+        _weeklyError = null;
       },
     );
 

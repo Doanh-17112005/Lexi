@@ -1,5 +1,6 @@
 class VocabWord {
   final int? id;
+  final String? vocabularyId; // Backend master VocabularyItem UUID
   final String? userVocabularyId; // Backend UserVocabulary UUID
   final String word;
   final String definition;
@@ -13,6 +14,7 @@ class VocabWord {
 
   VocabWord({
     this.id,
+    this.vocabularyId,
     this.userVocabularyId,
     required this.word,
     required this.definition,

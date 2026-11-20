@@ -7,6 +7,7 @@ import 'package:lexilingo_app/features/vocabulary/domain/usecases/submit_review_
 import 'package:lexilingo_app/features/vocabulary/domain/usecases/get_user_collection_usecase.dart';
 import 'package:lexilingo_app/features/vocabulary/domain/usecases/add_to_collection_usecase.dart';
 import 'package:lexilingo_app/features/vocabulary/presentation/providers/flashcard_provider.dart';
+import 'package:lexilingo_app/features/mistakes/data/mistake_notebook_repository.dart';
 import 'package:lexilingo_app/features/vocabulary/presentation/providers/quiz_provider.dart';
 import 'package:lexilingo_app/core/network/api_client.dart';
 import 'package:lexilingo_app/core/services/known_words_service.dart';
@@ -68,6 +69,7 @@ void setupVocabularyDependencies() {
       getDueVocabularyUseCase: getIt<GetDueVocabularyUseCase>(),
       submitReviewUseCase: getIt<SubmitReviewUseCase>(),
       vocabularyRepository: getIt<VocabularyRepository>(),
+      mistakeRepository: const MistakeNotebookRepository(),
     ),
   );
 }

@@ -6,7 +6,7 @@ Following agent-skills/language-learning-patterns:
 - progress-learning-streaks: Robust streak system with protections (3-5x engagement)
 - gamification-achievement-badges: Meaningful achievements (25-40% engagement boost)
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -49,6 +49,11 @@ from app.crud.gamification import WalletCRUD
 
 router = APIRouter(prefix="/progress", tags=["Progress"])
 logger = logging.getLogger(__name__)
+
+
+def _utc_today() -> date:
+    """Return the current UTC date used by DailyActivity and Streak records."""
+    return datetime.now(timezone.utc).date()
 
 
 @router.get("/me", response_model=ApiResponse[ProgressStatsResponse])
@@ -113,7 +118,7 @@ async def get_my_progress(
             'last_activity_at': progress.last_activity_at,
         })
     
-    seven_days_ago = date.today() - timedelta(days=7)
+    seven_days_ago = _utc_today() - timedelta(days=7)
     activity_rows = await db.execute(
         select(DailyActivity)
         .where(
@@ -259,7 +264,8 @@ async def complete_lesson(
             str(current_user.id),
             lesson_id,
             completion.score,
-            lesson.pass_threshold or 80.0
+            lesson.pass_threshold or 80.0,
+            commit=False,
         )
         
         # Recalculate course progress
@@ -273,7 +279,8 @@ async def complete_lesson(
             str(current_user.id),
             course_id,
             new_progress,
-            xp_earned
+            xp_earned,
+            commit=False,
         )
         
         # --- Update User.total_xp and numeric_level ---
@@ -317,13 +324,12 @@ async def complete_lesson(
             # No study_time_minutes: LessonCompletionCreate carries only a
             # score, so this route never learns how long the lesson took. The
             # attempt-based flow in routes/learning.py does, and records it.
-            from datetime import date as date_type
             await record_daily_activity(
                 db,
                 current_user.id,
                 xp_earned=xp_earned,
                 lessons_completed=1,
-                today=date_type.today(),
+                today=_utc_today(),
             )
         
         await db.commit()
@@ -341,6 +347,11 @@ async def complete_lesson(
                 db, current_user.id, "quiz_complete"
             )
             all_unlocked += perfect_unlocked
+        if all_unlocked:
+            await db.commit()
+            _uid_cache = str(current_user.id)
+            await delete_cached(build_cache_key("achievements_me", user_id=_uid_cache))
+            await delete_cached(build_cache_key("wallet", user_id=_uid_cache))
         
         # Get user's total XP
         total_xp = current_user.total_xp
@@ -440,7 +451,7 @@ async def get_weekly_progress(
     
     Used for weekly progress visualization in Flutter app.
     """
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     week_start = today - timedelta(days=6)  # Last 7 days including today
     
     # Query daily activities for the week
@@ -560,7 +571,7 @@ async def get_my_streak(
     )
     streak = result.scalar_one_or_none()
     
-    today = date.today()
+    today = _utc_today()
     
     if not streak:
         # Create new streak record for user — handle race condition
@@ -684,6 +695,7 @@ async def update_streak(
     elif streak_increased:
         message = f"{streak.current_streak} day streak!"
     
+    today = _utc_today()
     response_data = {
         'current_streak': streak.current_streak,
         'longest_streak': streak.longest_streak,
@@ -696,7 +708,7 @@ async def update_streak(
         'restores_used_this_month': streak.restores_used_this_month if isinstance(streak.restores_used_this_month, int) else 0,
         'restores_remaining': max(0, 3 - (streak.restores_used_this_month if isinstance(streak.restores_used_this_month, int) else 0)),
         'can_restore': (streak.previous_streak if isinstance(streak.previous_streak, int) else 0) > 0 and (streak.restores_used_this_month if isinstance(streak.restores_used_this_month, int) else 0) < 3,
-        'is_daily_reward_available': streak.last_activity_date == date.today() and (streak.last_reward_claim_date != date.today() or streak.last_reward_claim_date is None),
+        'is_daily_reward_available': streak.last_activity_date == today and (streak.last_reward_claim_date != today or streak.last_reward_claim_date is None),
     }
 
     return ApiResponse(
@@ -740,7 +752,7 @@ async def use_streak_freeze(
             detail="No streak freezes available. Purchase from shop."
         )
     
-    today = date.today()
+    today = _utc_today()
     
     # Check if freeze is needed
     if streak.last_activity_date == today:
@@ -786,7 +798,7 @@ async def restore_streak(
             detail="No streak record found to restore"
         )
         
-    today = date.today()
+    today = _utc_today()
     
     # Check monthly reset
     if streak.last_restore_date and (today.year != streak.last_restore_date.year or today.month != streak.last_restore_date.month):
@@ -865,7 +877,7 @@ async def claim_daily_reward(
             detail="No streak record found"
         )
         
-    today = date.today()
+    today = _utc_today()
     
     if streak.last_activity_date != today:
         raise HTTPException(

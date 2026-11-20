@@ -18,7 +18,7 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Awaitable, Callable, List, Optional
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,8 +27,11 @@ from app.core.dependencies import get_current_user
 from app.core.cache import build_cache_key, get_cached, set_cached, delete_cached
 from app.clients.ai_service_client import AIServiceClient
 from app.models.user import User
+from app.models.vocabulary import DifficultyLevel
 from app.crud.vocabulary import vocabulary_crud
 from app.services.streak_service import record_daily_activity, update_user_streak
+from app.services.vocabulary_catalog_policy import canonical_topic
+from app.services.content_publication_policy import is_vocabulary_learner_visible
 from app.schemas.common import MessageResponse
 from app.schemas.vocabulary import (
     VocabularyItemResponse,
@@ -138,7 +141,7 @@ async def get_word_of_day(
     """
     cache_key = build_cache_key("word_of_day", date=str(date.today()))
     cached = await get_cached(cache_key)
-    if cached:
+    if cached and is_vocabulary_learner_visible(cached.get("tags")):
         return VocabularyItemResponse.model_validate(cached)
 
     from sqlalchemy import func, select as sa_select
@@ -159,6 +162,16 @@ async def get_word_of_day(
     item = item_result.scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Word of the day not available")
+    if not is_vocabulary_learner_visible(getattr(item, "tags", None)):
+        rows = (
+            await db.execute(
+                sa_select(VocabModel).order_by(VocabModel.created_at, VocabModel.id)
+            )
+        ).scalars().all()
+        eligible = [row for row in rows if is_vocabulary_learner_visible(row.tags)]
+        if not eligible:
+            raise HTTPException(status_code=404, detail="No published vocabulary items found")
+        item = eligible[date.today().toordinal() % len(eligible)]
 
     response = VocabularyItemResponse.model_validate(item)
     await set_cached(cache_key, response.model_dump(mode="json"), ttl=86400)
@@ -188,15 +201,37 @@ async def get_vocabulary_items(
     - tag: Filter by tag
     - search: Partial word match
     """
+    normalized_level: Optional[str] = None
+    if difficulty_level is not None and difficulty_level.strip():
+        normalized_level = difficulty_level.strip().upper()
+        if normalized_level not in {lvl.value for lvl in DifficultyLevel}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Invalid difficulty_level '{difficulty_level}'. Expected one of A1, A2, B1, B2, C1, C2.",
+            )
+
+    normalized_tag: Optional[str] = (
+        canonical_topic(tag) if tag is not None and tag.strip() else None
+    )
+
     if search:
-        # Search by word
-        items = await vocabulary_crud.search_vocabulary(db, search, limit)
+        # Search by word with pagination and active filters
+        items = await vocabulary_crud.search_vocabulary(
+            db,
+            search,
+            limit,
+            offset=offset,
+            course_id=course_id,
+            lesson_id=lesson_id,
+            difficulty_level=normalized_level,
+            tag=normalized_tag,
+        )
     else:
         # Check cache for non-search queries (TTL 120s)
         cache_key = build_cache_key("vocab_items", course_id=course_id,
                                     lesson_id=lesson_id,
-                                    difficulty_level=difficulty_level,
-                                    tag=tag,
+                                    difficulty_level=normalized_level,
+                                    tag=normalized_tag,
                                     limit=limit, offset=offset)
         cached = await get_cached(cache_key)
         if cached is not None:
@@ -214,8 +249,8 @@ async def get_vocabulary_items(
             db,
             course_id=course_id,
             lesson_id=lesson_id,
-            difficulty_level=difficulty_level,
-            tag=tag,
+            difficulty_level=normalized_level,
+            tag=normalized_tag,
             limit=limit,
             offset=offset
         )
@@ -243,7 +278,7 @@ async def get_vocabulary_item(
     """
     item = await vocabulary_crud.get_vocabulary_item(db, vocabulary_id)
     
-    if not item:
+    if not item or not is_vocabulary_learner_visible(getattr(item, "tags", None)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Vocabulary item not found"
@@ -321,7 +356,7 @@ async def get_user_collection(
         total=total,
         limit=limit,
         offset=offset,
-        has_more=len(user_vocab_list) == limit
+        has_more=(offset + len(user_vocab_list)) < total,
     )
 
 
@@ -341,9 +376,9 @@ async def add_to_collection(
     - interval: 1 day
     - next_review_date: Tomorrow
     """
-    # Verify vocabulary exists
+    # Verify vocabulary exists and is learner-visible (published)
     vocab = await vocabulary_crud.get_vocabulary_item(db, vocabulary_id)
-    if not vocab:
+    if not vocab or not is_vocabulary_learner_visible(getattr(vocab, "tags", None)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Vocabulary item not found"
@@ -607,6 +642,7 @@ async def _best_effort_step(
 async def submit_review(
     user_vocabulary_id: uuid.UUID,
     review: ReviewSubmission,
+    idempotency_header: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -647,13 +683,27 @@ async def submit_review(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to review this vocabulary"
         )
+
+    raw_idem_key = (review.idempotency_key or idempotency_header or "").strip()
+    idem_cache_key: Optional[str] = None
+    if raw_idem_key:
+        idem_cache_key = build_cache_key(
+            "vocab_review_idem",
+            user_id=str(current_user.id),
+            user_vocabulary_id=str(user_vocabulary_id),
+            key=raw_idem_key,
+        )
+        cached_review = await get_cached(idem_cache_key)
+        if cached_review is not None:
+            return ReviewResponse.model_validate(cached_review)
     
-    # Submit review
+    # Submit review (commit atomically below together with XP & DailyActivity)
     updated_vocab = await vocabulary_crud.submit_review(
         db,
         user_vocabulary_id=user_vocabulary_id,
         quality=review.quality,
-        time_spent_ms=review.time_spent_ms
+        time_spent_ms=review.time_spent_ms,
+        commit=False,
     )
     
     # Calculate XP awarded (base + quality + streak bonus)
@@ -685,14 +735,14 @@ async def submit_review(
     apply_rank_info_to_user(current_user, new_rank_info)
     db.add(current_user)
     
-    # Record XPTransaction
+    # Record XPTransaction (unique per user_vocabulary_id + review count so later SRS reviews succeed)
     tx = XPTransaction(
         user_id=user_id,
         amount=xp_awarded,
         base_amount=xp_awarded,
         multiplier=1.0,
         source="vocab_review",
-        source_id=str(user_vocabulary_id),
+        source_id=f"{user_vocabulary_id}:{updated_vocab.total_reviews}",
         source_detail="vocabulary_review",
         level_before=old_level,
         level_after=new_level,
@@ -709,6 +759,7 @@ async def submit_review(
         study_time_minutes=(review.time_spent_ms or 0) // 60_000,
         today=datetime.now(timezone.utc).date(),
     )
+    await db.commit()
         
     # Below this point every step is a best-effort side effect (streak,
     # cache, achievements, proficiency) — none of them may roll back the
@@ -760,13 +811,25 @@ async def submit_review(
         0: "Review the word again"
     }
     
-    return ReviewResponse(
+    response_payload = ReviewResponse(
         user_vocabulary=updated_vocab,
         xp_awarded=xp_awarded,
         streak_bonus=streak_bonus,
         next_review_in_days=_days_until(updated_vocab.next_review_date),
         message=messages.get(review.quality, "Keep going!")
     )
+    if idem_cache_key is not None:
+        await _best_effort_step(
+            db,
+            "Idempotency cache",
+            lambda: set_cached(
+                idem_cache_key,
+                response_payload.model_dump(mode="json"),
+                ttl=86400,
+            ),
+        )
+
+    return response_payload
 
 
 # ===== Statistics =====

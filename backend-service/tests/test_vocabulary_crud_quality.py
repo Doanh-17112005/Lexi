@@ -3,7 +3,13 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.cefr_vocabulary_data import (
+    CANONICAL_TOPICS,
+    CEFR_VOCABULARY,
+    build_cefr_seed_tags,
+)
 from app.crud.vocabulary import vocabulary_crud
+from app.services.vocabulary_catalog_policy import normalize_all_tags
 
 
 class _ScalarResult:
@@ -118,3 +124,32 @@ async def test_bulk_add_uses_one_upsert_fetch_and_commit():
     assert missing_id not in insert_params
     assert session.execute_count == 2
     assert session.commit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cefr_seed_catalog_supports_all_six_system_topics_in_crud():
+    session = _FakeSession(
+        [
+            SimpleNamespace(
+                word=item["word"],
+                definition=item["definition"],
+                tags=build_cefr_seed_tags(item),
+            )
+            for item in CEFR_VOCABULARY
+        ]
+    )
+
+    for topic in CANONICAL_TOPICS:
+        assert not await vocabulary_crud.get_vocabulary_items(
+            session,
+            tag=topic,
+            limit=200,
+        )
+        matched = await vocabulary_crud.get_vocabulary_items(
+            session,
+            tag=topic,
+            limit=200,
+            published_only=False,
+        )
+        assert matched, f"Expected seed items for system topic '{topic}'"
+        assert all(topic in normalize_all_tags(row.tags) for row in matched)

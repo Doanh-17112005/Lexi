@@ -412,11 +412,15 @@ class _RegisterPageState extends State<RegisterPage> {
                                         ),
                                       ),
                                     );
-                                    nav.pushReplacement(
-                                      MaterialPageRoute(
-                                        builder: (_) => const LoginPage(),
-                                      ),
-                                    );
+                                    if (nav.canPop()) {
+                                      nav.pop();
+                                    } else {
+                                      nav.pushReplacement(
+                                        MaterialPageRoute(
+                                          builder: (_) => const LoginPage(),
+                                        ),
+                                      );
+                                    }
                                   }
                                 }
                               },

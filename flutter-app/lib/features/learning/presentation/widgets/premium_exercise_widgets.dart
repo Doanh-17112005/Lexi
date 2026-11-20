@@ -317,6 +317,9 @@ String _extractQuotedWord(String text) {
 
 String formatFillBlankPrompt(String question, String correctAnswer) {
   if (!question.contains('{blank}')) return question;
+  if (correctAnswer.trim().isEmpty) {
+    return question.replaceAll('{blank}', '_____');
+  }
   final words = correctAnswer.split(' ');
   final blankRep = words.map((w) => '_' * w.length).join(' ');
   return question.replaceAll('{blank}', blankRep);
@@ -561,12 +564,14 @@ class _FillBlankWidgetState extends State<FillBlankWidget> {
   Widget _buildDashPlaceholder(_ExercisePalette colors) {
     final answer = widget.exercise.correctAnswer.trim();
     // Build "_ _ _" per word, words separated by two spaces
-    final dashes = answer
-        .split(' ')
-        .map((w) {
-          return List.generate(w.length.clamp(1, 12), (_) => '_').join(' ');
-        })
-        .join('   ');
+    final dashes = answer.isEmpty
+        ? '_ _ _ _ _'
+        : answer
+              .split(' ')
+              .map((w) {
+                return List.generate(w.length.clamp(1, 12), (_) => '_').join(' ');
+              })
+              .join('   ');
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       child: Text(

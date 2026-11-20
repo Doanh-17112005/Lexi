@@ -913,7 +913,15 @@ class LexiChatProvider extends ChangeNotifier {
   Future<void> _playTtsAudio(String base64Audio) async {
     try {
       final bytes = base64Decode(base64Audio);
-      final uri = Uri.dataFromBytes(bytes, mimeType: 'audio/mpeg');
+      final isWav = bytes.length >= 4 &&
+          bytes[0] == 0x52 &&
+          bytes[1] == 0x49 &&
+          bytes[2] == 0x46 &&
+          bytes[3] == 0x46;
+      final uri = Uri.dataFromBytes(
+        bytes,
+        mimeType: isWav ? 'audio/wav' : 'audio/mpeg',
+      );
       await _ttsPlayer.setUrl(uri.toString());
       await _ttsPlayer.setSpeed(_ttsSpeed);
       await _ttsPlayer.play();

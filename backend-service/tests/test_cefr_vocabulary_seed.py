@@ -4,6 +4,7 @@ from copy import deepcopy
 import pytest
 
 from app.core.cefr_vocabulary_data import (
+    CANONICAL_TOPICS,
     CEFR_LEVELS,
     CEFR_VOCABULARY,
     PARTS_OF_SPEECH,
@@ -11,7 +12,14 @@ from app.core.cefr_vocabulary_data import (
     PROVENANCE_SOURCE_VERIFIED,
     QA_STATUS_NEEDS_REVIEW,
     QA_STATUS_VERIFIED,
+    build_cefr_seed_tags,
     validate_cefr_vocabulary,
+)
+from app.services.vocabulary_catalog_policy import (
+    CANONICAL_TOPICS as POLICY_CANONICAL_TOPICS,
+)
+from app.services.vocabulary_catalog_policy import (
+    normalize_all_tags,
 )
 
 
@@ -614,3 +622,42 @@ def test_validator_rejects_machine_detectable_content_errors(field, value, messa
 
     with pytest.raises(ValueError, match=message):
         validate_cefr_vocabulary(items)
+
+
+def test_seed_topics_match_canonical_policy_and_cover_all_six_ui_topics() -> None:
+    assert CANONICAL_TOPICS == POLICY_CANONICAL_TOPICS
+    assert len(CANONICAL_TOPICS) == 6
+    topic_counts = Counter(item["topic"] for item in CEFR_VOCABULARY)
+    assert set(topic_counts.keys()) == set(CANONICAL_TOPICS)
+    for topic in CANONICAL_TOPICS:
+        assert topic_counts[topic] >= 12
+    multi_topic_count = 0
+    for item in CEFR_VOCABULARY:
+        tags = normalize_all_tags(build_cefr_seed_tags(item))
+        assert item["topic"] in tags
+        for topic in item["topics"]:
+            assert topic in tags
+        if len(item["topics"]) > 1:
+            multi_topic_count += 1
+        assert "ai_generated" in tags
+        assert "needs_review" in tags
+    assert multi_topic_count >= 20
+
+
+def test_validator_rejects_invalid_or_missing_topic_coverage() -> None:
+    bad_topic_items = deepcopy(CEFR_VOCABULARY)
+    bad_topic_items[0]["topic"] = "unknown_topic"
+    with pytest.raises(ValueError, match="Unsupported topic"):
+        validate_cefr_vocabulary(bad_topic_items)
+
+    bad_secondary_items = deepcopy(CEFR_VOCABULARY)
+    bad_secondary_items[0]["topics"] = ("daily", "unknown_secondary")
+    with pytest.raises(ValueError, match="Unsupported topic"):
+        validate_cefr_vocabulary(bad_secondary_items)
+
+    missing_topic_items = deepcopy(CEFR_VOCABULARY)
+    for item in missing_topic_items:
+        if item["topic"] == "science":
+            item["topic"] = "general"
+    with pytest.raises(ValueError, match="Missing canonical topic coverage"):
+        validate_cefr_vocabulary(missing_topic_items)

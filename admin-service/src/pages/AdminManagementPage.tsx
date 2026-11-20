@@ -4,6 +4,7 @@ import { StatusPill } from "../components/StatusPill";
 import { useI18n } from "../lib/i18n";
 import { apiFetch } from "../lib/api";
 import { ENV } from "../lib/env";
+import { useAuth } from "../components/AuthProvider";
 import { Shield, UserPlus, Mail, Calendar } from "lucide-react";
 
 interface AdminUser {
@@ -17,8 +18,14 @@ interface AdminUser {
   last_login_at?: string;
 }
 
+export const canToggleAdminStatus = (
+  targetAdminId: string,
+  currentAdminId?: string | null,
+): boolean => Boolean(targetAdminId) && targetAdminId !== currentAdminId;
+
 export const AdminManagementPage = () => {
   const { t } = useI18n();
+  const { user: currentAdmin } = useAuth();
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,15 +70,19 @@ export const AdminManagementPage = () => {
   };
 
   const handleAddAdmin = async () => {
-    if (!newEmail) return;
+    const normalizedEmail = newEmail.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setModalError("Vui lòng nhập email.");
+      return;
+    }
     setAdding(true);
     setModalError(null);
     try {
       const searchRes = await apiFetch<{ data: { users: any[] } }>(
-        `${ENV.backendUrl}/admin/users?search=${encodeURIComponent(newEmail)}&page_size=10`
+        `${ENV.backendUrl}/admin/users?search=${encodeURIComponent(normalizedEmail)}&page_size=10`
       );
       const target = (searchRes.data?.users ?? []).find(
-        (u: any) => u.email.toLowerCase() === newEmail.toLowerCase()
+        (u: any) => u.email.toLowerCase() === normalizedEmail
       );
       if (!target) {
         setModalError("Không tìm thấy user. Đảm bảo họ đã đăng ký tài khoản trước.");
@@ -93,6 +104,14 @@ export const AdminManagementPage = () => {
   };
 
   const handleToggleStatus = async (userId: string, currentStatus: boolean) => {
+    if (!canToggleAdminStatus(userId, currentAdmin?.id)) {
+      setError("Không thể tự thay đổi trạng thái của chính bạn.");
+      return;
+    }
+    if (!confirm(`Bạn có chắc muốn ${currentStatus ? "tạm dừng" : "kích hoạt"} tài khoản admin này?`)) {
+      return;
+    }
+    setError(null);
     try {
       await apiFetch(`${ENV.backendUrl}/admin/users/${userId}/status`, {
         method: "PUT",
@@ -195,7 +214,10 @@ export const AdminManagementPage = () => {
                   </td>
                   <td>
                     <button
+                      type="button"
                       className="btn-ghost btn-sm"
+                      disabled={!canToggleAdminStatus(admin.id, currentAdmin?.id)}
+                      title={!canToggleAdminStatus(admin.id, currentAdmin?.id) ? "Không thể tự thay đổi trạng thái của chính bạn" : undefined}
                       onClick={() => handleToggleStatus(admin.id, admin.is_active)}
                     >
                       {admin.is_active ? t.adminManagement.deactivate : t.adminManagement.activate}
@@ -210,7 +232,7 @@ export const AdminManagementPage = () => {
 
       {/* Add Admin Modal */}
       {showAddModal && (
-        <div className="modal-overlay" onClick={() => setShowAddModal(false)}>
+        <div className="modal-overlay" role="dialog" aria-modal="true" onClick={() => setShowAddModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
             <SectionHeader
               title={t.adminManagement.addAdmin}
@@ -242,10 +264,10 @@ export const AdminManagementPage = () => {
                 </select>
               </div>
               <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-                <button className="btn-secondary" onClick={() => setShowAddModal(false)} disabled={adding}>
+                <button type="button" className="btn-secondary" onClick={() => setShowAddModal(false)} disabled={adding}>
                   {t.common.cancel}
                 </button>
-                <button className="btn-primary" onClick={handleAddAdmin} disabled={adding || !newEmail}>
+                <button type="button" className="btn-primary" onClick={handleAddAdmin} disabled={adding || !newEmail}>
                   {adding ? t.common.saving : t.adminManagement.addAdmin}
                 </button>
               </div>

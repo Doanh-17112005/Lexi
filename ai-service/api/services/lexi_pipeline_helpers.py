@@ -7,6 +7,8 @@ import logging
 import re
 from typing import List, Optional
 
+from api.services.ai_safety import scrub_sensitive_output
+
 logger = logging.getLogger(__name__)
 
 _INTERNAL_CONTEXT_FALLBACK = (
@@ -104,7 +106,7 @@ def sanitize_lexi_response(text: str) -> str:
     if not cleaned:
         return "Squawk! I lost my words for a second. Could you ask that again?"
 
-    return cleaned
+    return scrub_sensitive_output(cleaned, fallback=_INTERNAL_CONTEXT_FALLBACK)
 
 
 def _generate_gtts_b64(clean_text: str) -> str:

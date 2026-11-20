@@ -197,6 +197,10 @@ export const ContentQaQueuePage = () => {
 
   const saveEdit = async () => {
     if (!selected || !editForm) return;
+    if (!editForm.question.trim() || !editForm.correctAnswer.trim()) {
+      setEditError("Question and correct answer cannot be empty.");
+      return;
+    }
     setEditError(null);
     let options: unknown;
     if (editForm.optionsJson.trim()) {

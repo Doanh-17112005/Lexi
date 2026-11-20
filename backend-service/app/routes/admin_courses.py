@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import invalidate_cache
 from app.core.database import get_db
 from app.core.dependencies import get_current_admin
 from app.crud.course import CourseCRUD, LessonCRUD, UnitCRUD
@@ -23,6 +24,13 @@ from app.models.content import GrammarItem, QuestionItem, TestExam
 from app.models.course import Course, Lesson, Unit, count_exercises
 from app.models.user import User
 from app.models.vocabulary import VocabularyItem
+from app.services.content_publication_policy import classify_vocabulary_publication
+from app.services.vocabulary_catalog_policy import (
+    CANONICAL_TOPICS,
+    canonical_topic,
+    normalize_all_tags,
+    normalize_topic_tags,
+)
 from app.schemas.content import (
     GrammarCreate,
     GrammarResponse,
@@ -51,6 +59,145 @@ from app.schemas.response import ApiResponse
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
 require_admin = get_current_admin
+
+_VALID_VOCAB_QA_STATUSES = {"NEEDS_REVIEW", "VERIFIED", "UNREVIEWED"}
+_VALID_VOCAB_AUDIT_STATUSES = {"CONFIRMED_SOURCE", "CONFLICT", "BLOCKED"}
+
+
+async def _invalidate_course_caches() -> None:
+    await invalidate_cache("courses")
+
+
+async def _invalidate_vocab_caches() -> None:
+    await invalidate_cache("vocab_items")
+    await invalidate_cache("word_of_day")
+
+
+def _extract_vocab_metadata(raw_tags: object) -> dict:
+    tags = normalize_all_tags(raw_tags)
+    topics = list(normalize_topic_tags(raw_tags))
+    qa_status = "UNREVIEWED"
+    audit_status: Optional[str] = None
+    provenance = "LEGACY"
+    source_reference: Optional[str] = None
+
+    if isinstance(raw_tags, dict):
+        raw_qa = raw_tags.get("qa_status")
+        if isinstance(raw_qa, str) and raw_qa.strip().upper() in _VALID_VOCAB_QA_STATUSES:
+            qa_status = raw_qa.strip().upper()
+        raw_audit = raw_tags.get("audit_status")
+        if isinstance(raw_audit, str) and raw_audit.strip().upper() in _VALID_VOCAB_AUDIT_STATUSES:
+            audit_status = raw_audit.strip().upper()
+        raw_source = raw_tags.get("source")
+        if isinstance(raw_source, str) and raw_source.strip():
+            provenance = raw_source.strip().upper()
+        raw_ref = raw_tags.get("source_reference")
+        if isinstance(raw_ref, str) and raw_ref.strip():
+            source_reference = raw_ref.strip()
+    elif isinstance(raw_tags, list):
+        upper_tags = {str(t).strip().upper() for t in raw_tags if isinstance(t, str)}
+        if "VERIFIED" in upper_tags:
+            qa_status = "VERIFIED"
+        elif "NEEDS_REVIEW" in upper_tags:
+            qa_status = "NEEDS_REVIEW"
+        if "CONFLICT" in upper_tags:
+            audit_status = "CONFLICT"
+        elif "BLOCKED" in upper_tags:
+            audit_status = "BLOCKED"
+        elif "CONFIRMED_SOURCE" in upper_tags:
+            audit_status = "CONFIRMED_SOURCE"
+        if "AI_GENERATED" in upper_tags:
+            provenance = "AI_GENERATED"
+        elif "ADMIN_AUTHORED" in upper_tags:
+            provenance = "ADMIN_AUTHORED"
+
+    return {
+        "tags": tags,
+        "topics": topics,
+        "qa_status": qa_status,
+        "audit_status": audit_status,
+        "publication_state": classify_vocabulary_publication(raw_tags),
+        "provenance": provenance,
+        "source_reference": source_reference,
+    }
+
+
+def _build_vocab_tags_payload(
+    *,
+    existing_tags: object = None,
+    topics_csv: Optional[str] = None,
+    qa_status: Optional[str] = None,
+    source_reference: Optional[str] = None,
+    default_source: str = "ADMIN_AUTHORED",
+) -> dict:
+    meta = _extract_vocab_metadata(existing_tags)
+    raw_topics = (
+        [t.strip() for t in topics_csv.split(",") if t.strip()]
+        if topics_csv is not None
+        else meta["topics"]
+    )
+    resolved_topics: list[str] = []
+    for raw in raw_topics:
+        canon = canonical_topic(raw)
+        if canon in CANONICAL_TOPICS and canon not in resolved_topics:
+            resolved_topics.append(canon)
+    if not resolved_topics:
+        resolved_topics = ["general"]
+
+    resolved_ref = (
+        source_reference.strip()
+        if source_reference is not None
+        else meta["source_reference"]
+    )
+    requested_qa = (
+        qa_status.strip().upper()
+        if qa_status and qa_status.strip()
+        else (meta["qa_status"] if existing_tags is not None else "NEEDS_REVIEW")
+    )
+    if requested_qa not in _VALID_VOCAB_QA_STATUSES:
+        requested_qa = "NEEDS_REVIEW"
+    if requested_qa == "VERIFIED" and (
+        not resolved_ref or meta["audit_status"] in {"CONFLICT", "BLOCKED"}
+    ):
+        requested_qa = "NEEDS_REVIEW"
+
+    resolved_source = (
+        meta["provenance"]
+        if existing_tags is not None and meta["provenance"] != "LEGACY"
+        else default_source
+    )
+    tag_dict: dict = {
+        "tags": resolved_topics,
+        "topic": resolved_topics[0],
+        "source": resolved_source,
+        "qa_status": requested_qa,
+    }
+    if meta["audit_status"]:
+        tag_dict["audit_status"] = meta["audit_status"]
+    if resolved_ref:
+        tag_dict["source_reference"] = resolved_ref
+    return tag_dict
+
+
+def _serialize_admin_vocab(item: VocabularyItem) -> dict:
+    raw_tags = getattr(item, "tags", None)
+    meta = _extract_vocab_metadata(raw_tags)
+    return {
+        "id": str(item.id),
+        "word": item.word,
+        "definition": getattr(item, "definition", None),
+        "translation": item.translation,
+        "part_of_speech": item.part_of_speech,
+        "pronunciation": getattr(item, "pronunciation", None),
+        "difficulty_level": item.difficulty_level,
+        "tags": meta["tags"],
+        "topics": meta["topics"],
+        "qa_status": meta["qa_status"],
+        "audit_status": meta["audit_status"],
+        "publication_state": meta["publication_state"],
+        "provenance": meta["provenance"],
+        "source_reference": meta["source_reference"],
+    }
 
 
 async def _assert_publishable(db: AsyncSession, course_id: UUID) -> None:
@@ -283,7 +430,8 @@ async def create_course(
     course = course.model_copy(update={"is_published": False})
 
     new_course = await CourseCRUD.create_course(db, course)
-    
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Course created successfully",
@@ -318,7 +466,9 @@ async def update_course(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Course not found"
         )
-    
+
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Course updated successfully",
@@ -344,7 +494,9 @@ async def delete_course(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Course not found"
         )
-    
+
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Course deleted successfully",
@@ -467,6 +619,7 @@ async def bulk_import_courses(
             errors.append(f'Course "{course_data.title}": {str(e)}')
 
     await db.commit()
+    await _invalidate_course_caches()
 
     return ApiResponse(
         success=True,
@@ -504,7 +657,8 @@ async def create_unit(
         )
     
     new_unit = await UnitCRUD.create_unit(db, unit)
-    
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Unit created successfully",
@@ -531,7 +685,9 @@ async def update_unit(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Unit not found"
         )
-    
+
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Unit updated successfully",
@@ -557,7 +713,9 @@ async def delete_unit(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Unit not found"
         )
-    
+
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Unit deleted successfully",
@@ -589,7 +747,8 @@ async def create_lesson(
         )
     
     new_lesson = await LessonCRUD.create_lesson(db, lesson)
-    
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Lesson created successfully",
@@ -610,6 +769,7 @@ async def update_lesson(
     Admin only endpoint.
     """
     updated_lesson = await _apply_lesson_update(db, lesson_id, lesson_update)
+    await _invalidate_course_caches()
 
     return ApiResponse(
         success=True,
@@ -636,7 +796,9 @@ async def delete_lesson(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lesson not found"
         )
-    
+
+    await _invalidate_course_caches()
+
     return ApiResponse(
         success=True,
         message="Lesson deleted successfully",
@@ -673,6 +835,7 @@ async def update_lesson_content(
     the full content so the editor can re-render from the saved state.
     """
     lesson = await _apply_lesson_update(db, lesson_id, payload)
+    await _invalidate_course_caches()
     data = LessonDetailResponse.model_validate(lesson).model_dump()
     return ApiResponse(success=True, message="Lesson content updated", data=data)
 
@@ -683,36 +846,61 @@ async def update_lesson_content(
 
 @router.get("/vocabulary", response_model=ApiResponse[List[dict]])
 async def list_vocabulary(
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    search: Optional[str] = Query(None),
+    difficulty_level: Optional[str] = Query(None),
+    topic: Optional[str] = Query(None),
+    qa_status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
     """
-    List all vocabulary items.
+    List vocabulary items with optional CEFR, topic, QA status, and text search filters.
     
     Admin only endpoint.
     """
-    result = await db.execute(
-        select(VocabularyItem)
-        .order_by(VocabularyItem.word)
-        .limit(limit)
-        .offset(offset)
+    query = select(VocabularyItem).order_by(VocabularyItem.word)
+    if search and search.strip():
+        pattern = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                VocabularyItem.word.ilike(pattern),
+                VocabularyItem.definition.ilike(pattern),
+            )
+        )
+    if difficulty_level and difficulty_level.strip():
+        query = query.where(
+            VocabularyItem.difficulty_level == difficulty_level.strip().upper()
+        )
+
+    normalized_topic = (
+        canonical_topic(topic) if topic and topic.strip() else None
     )
-    items = result.scalars().all()
-    
+    normalized_qa = (
+        qa_status.strip().upper() if qa_status and qa_status.strip() else None
+    )
+
+    if not normalized_topic and not normalized_qa:
+        query = query.limit(limit).offset(offset)
+        result = await db.execute(query)
+        serialized = [_serialize_admin_vocab(item) for item in result.scalars().all()]
+    else:
+        result = await db.execute(query)
+        filtered = []
+        for item in result.scalars().all():
+            item_data = _serialize_admin_vocab(item)
+            if normalized_topic and normalized_topic not in item_data["topics"]:
+                continue
+            if normalized_qa and item_data["qa_status"] != normalized_qa:
+                continue
+            filtered.append(item_data)
+        serialized = filtered[offset : offset + limit]
+
     return ApiResponse(
         success=True,
-        message=f"Retrieved {len(items)} vocabulary items",
-        data=[{
-            "id": str(item.id),
-            "word": item.word,
-            "definition": getattr(item, "definition", None),
-            "translation": item.translation,
-            "part_of_speech": item.part_of_speech,
-            "pronunciation": getattr(item, "pronunciation", None),
-            "difficulty_level": item.difficulty_level,
-        } for item in items]
+        message=f"Retrieved {len(serialized)} vocabulary items",
+        data=serialized,
     )
 
 
@@ -724,43 +912,41 @@ async def create_vocabulary(
     part_of_speech: str = "noun",
     pronunciation: Optional[str] = None,
     difficulty_level: str = "A1",
+    topics: Optional[str] = None,
+    qa_status: Optional[str] = None,
+    source_reference: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
     """
     Create a new vocabulary item.
     
-    Args:
-        word: The vocabulary word
-        definition: English definition
-        translation: Vietnamese translation
-        part_of_speech: Part of speech (noun, verb, adjective, etc.)
-        pronunciation: IPA pronunciation
-        difficulty_level: CEFR level (A1, A2, B1, B2, C1, C2)
-    
     Admin only endpoint.
     """
+    tags_payload = _build_vocab_tags_payload(
+        topics_csv=topics,
+        qa_status=qa_status,
+        source_reference=source_reference,
+        default_source="ADMIN_AUTHORED",
+    )
     vocab = VocabularyItem(
         word=word,
         definition=definition,
         translation={"vi": translation},  # JSON format as per model
         part_of_speech=part_of_speech,
         pronunciation=pronunciation,
-        difficulty_level=difficulty_level
+        difficulty_level=difficulty_level.strip().upper(),
+        tags=tags_payload,
     )
     db.add(vocab)
     await db.commit()
     await db.refresh(vocab)
+    await _invalidate_vocab_caches()
     
     return ApiResponse(
         success=True,
         message="Vocabulary created successfully",
-        data={
-            "id": str(vocab.id),
-            "word": vocab.word,
-            "definition": vocab.definition,
-            "translation": vocab.translation
-        }
+        data=_serialize_admin_vocab(vocab),
     )
 
 
@@ -788,6 +974,7 @@ async def delete_vocabulary(
     
     await db.delete(vocab)
     await db.commit()
+    await _invalidate_vocab_caches()
     
     return ApiResponse(
         success=True,
@@ -805,10 +992,13 @@ async def update_vocabulary(
     part_of_speech: Optional[str] = None,
     pronunciation: Optional[str] = None,
     difficulty_level: Optional[str] = None,
+    topics: Optional[str] = None,
+    qa_status: Optional[str] = None,
+    source_reference: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    """Update a vocabulary item."""
+    """Update a vocabulary item without wiping existing translation examples or metadata."""
     result = await db.execute(
         select(VocabularyItem).where(VocabularyItem.id == vocab_id)
     )
@@ -816,27 +1006,41 @@ async def update_vocabulary(
     if not vocab:
         raise HTTPException(status_code=404, detail="Vocabulary not found")
     
-    if word is not None: vocab.word = word
-    if definition is not None: vocab.definition = definition
-    if translation is not None: vocab.translation = {"vi": translation}
-    if part_of_speech is not None: vocab.part_of_speech = part_of_speech
-    if pronunciation is not None: vocab.pronunciation = pronunciation
-    if difficulty_level is not None: vocab.difficulty_level = difficulty_level
+    if word is not None:
+        vocab.word = word
+    if definition is not None:
+        vocab.definition = definition
+    if translation is not None:
+        existing_translation = (
+            dict(vocab.translation)
+            if isinstance(vocab.translation, dict)
+            else {}
+        )
+        existing_translation["vi"] = translation
+        vocab.translation = existing_translation
+    if part_of_speech is not None:
+        vocab.part_of_speech = part_of_speech
+    if pronunciation is not None:
+        vocab.pronunciation = pronunciation
+    if difficulty_level is not None:
+        vocab.difficulty_level = difficulty_level.strip().upper()
+    if topics is not None or qa_status is not None or source_reference is not None:
+        vocab.tags = _build_vocab_tags_payload(
+            existing_tags=vocab.tags,
+            topics_csv=topics,
+            qa_status=qa_status,
+            source_reference=source_reference,
+            default_source="ADMIN_AUTHORED",
+        )
     
     await db.commit()
     await db.refresh(vocab)
+    await _invalidate_vocab_caches()
     
     return ApiResponse(
         success=True,
         message="Vocabulary updated successfully",
-        data={
-            "id": str(vocab.id),
-            "word": vocab.word,
-            "definition": vocab.definition,
-            "translation": vocab.translation,
-            "part_of_speech": vocab.part_of_speech,
-            "difficulty_level": vocab.difficulty_level,
-        }
+        data=_serialize_admin_vocab(vocab),
     )
 
 
@@ -873,13 +1077,21 @@ async def bulk_import_vocabulary(
             skipped += 1
             continue
 
+        raw_topics = (row.get("topics") or row.get("topic") or "").strip() or None
+        raw_ref = (row.get("source_reference") or "").strip() or None
         pending[key] = {
             "word": word,
             "definition": definition or word,
             "translation": {"vi": translation} if translation else {},
             "part_of_speech": part_of_speech,
             "pronunciation": row.get("pronunciation", "").strip() or None,
-            "difficulty_level": row.get("difficulty_level", "A1").strip() or "A1",
+            "difficulty_level": (row.get("difficulty_level", "A1").strip() or "A1").upper(),
+            "tags": _build_vocab_tags_payload(
+                topics_csv=raw_topics,
+                qa_status="NEEDS_REVIEW",
+                source_reference=raw_ref,
+                default_source="ADMIN_IMPORT",
+            ),
         }
 
     if pending:
@@ -904,6 +1116,7 @@ async def bulk_import_vocabulary(
         conflict_columns=("word", "part_of_speech"),
     )
     await db.commit()
+    await _invalidate_vocab_caches()
     
     return ApiResponse(
         success=True,

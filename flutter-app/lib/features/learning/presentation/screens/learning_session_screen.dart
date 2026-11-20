@@ -33,6 +33,7 @@ class LearningSessionScreen extends StatefulWidget {
 class _LearningSessionScreenState extends State<LearningSessionScreen> {
   bool _wasAnswered = false;
   bool _wasCompleted = false;
+  bool _streakSyncedOnCompletion = false;
   LearningProvider? _provider;
 
   @override
@@ -111,17 +112,38 @@ class _LearningSessionScreenState extends State<LearningSessionScreen> {
                 if (provider.currentLesson == null) {
                   return const SizedBox.shrink();
                 }
-                return Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Center(
-                    child: Text(
-                      '${provider.currentExerciseIndex + 1}/${provider.totalExercises}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                final displayIndex = provider.totalExercises > 0
+                    ? (provider.currentExerciseIndex + 1).clamp(
+                        1,
+                        provider.totalExercises,
+                      )
+                    : 0;
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (provider.hasGrammarTheory &&
+                        !provider.isTheoryPhase &&
+                        !provider.isCompleted)
+                      IconButton(
+                        tooltip: 'Grammar Theory',
+                        icon: const Icon(Icons.menu_book_rounded),
+                        onPressed: provider.openTheoryReview,
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Center(
+                        child: Text(
+                          provider.isTheoryPhase
+                              ? 'Theory'
+                              : '$displayIndex/${provider.totalExercises}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 );
               },
             ),
@@ -139,6 +161,11 @@ class _LearningSessionScreenState extends State<LearningSessionScreen> {
 
             if (provider.currentLesson == null) {
               return Center(child: Text('lesson.noLessonData'.tr()));
+            }
+
+            // Show grammar theory phase before practice when attached
+            if (provider.isTheoryPhase) {
+              return _buildGrammarTheoryPhase(context, provider);
             }
 
             // Show completion screen
@@ -641,20 +668,26 @@ class _LearningSessionScreenState extends State<LearningSessionScreen> {
     final total = provider.totalExercises;
     final percentage = (score / total * 100).toInt();
 
-    // Update streak when lesson is completed, then show milestone if reached
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      final streakProvider = context.read<StreakProvider>();
-      await streakProvider.updateStreak();
-      if (!context.mounted) return;
-      if (streakProvider.milestoneJustReached) {
-        await StreakMilestoneOverlay.show(
-          context,
-          streakDays: streakProvider.currentStreak,
-          onDismiss: streakProvider.clearMilestone,
-        );
-      }
-    });
+    // Update streak once after backend lesson completion finishes, avoiding
+    // duplicate calls and concurrent DailyActivity races on rebuilds.
+    if (!_streakSyncedOnCompletion &&
+        !provider.isCompletingLesson &&
+        (provider.hasCompletedLesson || provider.currentAttempt == null)) {
+      _streakSyncedOnCompletion = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final streakProvider = context.read<StreakProvider>();
+        await streakProvider.updateStreak();
+        if (!context.mounted) return;
+        if (streakProvider.milestoneJustReached) {
+          await StreakMilestoneOverlay.show(
+            context,
+            streakDays: streakProvider.currentStreak,
+            onDismiss: streakProvider.clearMilestone,
+          );
+        }
+      });
+    }
 
     return Stack(
       children: [
@@ -875,6 +908,7 @@ class _LearningSessionScreenState extends State<LearningSessionScreen> {
                   width: double.infinity,
                   child: OutlinedButton(
                     onPressed: () {
+                      setState(() => _streakSyncedOnCompletion = false);
                       provider.restartLesson();
                     },
                     style: OutlinedButton.styleFrom(
@@ -890,6 +924,137 @@ class _LearningSessionScreenState extends State<LearningSessionScreen> {
                   ),
                 ),
             ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGrammarTheoryPhase(
+    BuildContext context,
+    LearningProvider provider,
+  ) {
+    final theory = provider.currentLesson?.grammarTheory;
+    if (theory == null) return const SizedBox.shrink();
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final hasProgress = provider.currentExerciseIndex > 0;
+    final ctaLabel = hasProgress
+        ? 'Continue Practice'
+        : 'Start Practice (${provider.totalExercises})';
+
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (theory.level != null && theory.level!.isNotEmpty)
+                      Chip(
+                        label: Text(theory.level!),
+                        backgroundColor: AppColorRoles.primary(isDark)
+                            .withValues(alpha: 0.14),
+                      ),
+                    if (theory.topic != null && theory.topic!.isNotEmpty)
+                      Chip(label: Text(theory.topic!)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  theory.title,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                if (theory.summary != null && theory.summary!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    theory.summary!,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: AppColorRoles.textSecondary(isDark),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      theory.explanation,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+                if (theory.grammarPoints.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Key Points',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...theory.grammarPoints.map(
+                    (point) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('• '),
+                          Expanded(child: Text(point.toString())),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                if (theory.examples.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Examples',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...theory.examples.map(
+                    (ex) => Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          ex is Map
+                              ? '${ex['sentence'] ?? ex['en'] ?? ex['example'] ?? ex.toString()}'
+                                    '${ex['translation'] != null ? '\n${ex['translation']}' : ''}'
+                              : ex.toString(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: provider.beginPracticePhase,
+                child: Text(ctaLabel),
+              ),
+            ),
           ),
         ),
       ],

@@ -96,6 +96,7 @@ async def test_provider_info_reports_gemini_when_groq_yields_nothing(monkeypatch
     monkeypatch.setattr("api.core.groq_key_pool.release_groq_key", AsyncMock())
     monkeypatch.setattr("api.core.groq_key_pool.record_groq_key_usage", AsyncMock())
     monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini-key")
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
 
     groq_failure_response = _FakeStreamResponse(500, [])
     gemini_response = _FakeStreamResponse(200, _gemini_sse("Xin ", "chào"))

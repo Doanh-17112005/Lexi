@@ -1562,7 +1562,8 @@
     "startLesson": "Bắt đầu bài học",
     "correct": "Đúng rồi!",
     "notQuite": "Chưa đúng",
-    "loadingRoadmap": "Đang tải lộ trình…"
+    "loadingRoadmap": "Đang tải lộ trình…",
+    "lessonLockedHint": "Hãy hoàn thành bài học trước để mở khóa bài này."
   },
   "books": {
     "library": "Thư viện sách",

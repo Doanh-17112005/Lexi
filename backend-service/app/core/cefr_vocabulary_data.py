@@ -4,17 +4,33 @@ import re
 from collections import Counter
 
 CEFR_LEVELS = ("A1", "A2", "B1", "B2", "C1", "C2")
+CANONICAL_TOPICS = (
+    "general",
+    "travel",
+    "business",
+    "daily",
+    "science",
+    "technology",
+)
 PARTS_OF_SPEECH = {"adjective", "adverb", "noun", "preposition", "verb"}
 PROVENANCE_AI_GENERATED = "AI_GENERATED"
 PROVENANCE_SOURCE_VERIFIED = "SOURCE_VERIFIED"
 QA_STATUS_NEEDS_REVIEW = "NEEDS_REVIEW"
 QA_STATUS_VERIFIED = "VERIFIED"
+AUDIT_STATUS_CONFIRMED_SOURCE = "CONFIRMED_SOURCE"
+AUDIT_STATUS_CONFLICT = "CONFLICT"
+AUDIT_STATUS_BLOCKED = "BLOCKED"
 
 _ALLOWED_PROVENANCE_TYPES = {
     PROVENANCE_AI_GENERATED,
     PROVENANCE_SOURCE_VERIFIED,
 }
 _ALLOWED_QA_STATUSES = {QA_STATUS_NEEDS_REVIEW, QA_STATUS_VERIFIED}
+_ALLOWED_AUDIT_STATUSES = {
+    AUDIT_STATUS_CONFIRMED_SOURCE,
+    AUDIT_STATUS_CONFLICT,
+    AUDIT_STATUS_BLOCKED,
+}
 _WORD_PATTERN = re.compile(r"^[a-z]+(?:[-'][a-z]+)*$")
 _MOJIBAKE_MARKERS = ("\ufffd", "Ã", "Â", "â€")
 
@@ -223,14 +239,347 @@ _PHONETICS = {
     "serendipity": "/ˌser.ənˈdɪp.ə.ti/",
 }
 
+_WORD_TOPICS: dict[str, str] = {
+    # A1
+    "family": "daily",
+    "happy": "daily",
+    "house": "daily",
+    "school": "daily",
+    "friend": "daily",
+    "water": "daily",
+    "food": "daily",
+    "morning": "daily",
+    "work": "business",
+    "name": "general",
+    "book": "science",
+    "city": "travel",
+    "mother": "daily",
+    "father": "daily",
+    "child": "daily",
+    "eat": "daily",
+    "drink": "daily",
+    "sleep": "daily",
+    "speak": "general",
+    "read": "general",
+    "write": "business",
+    "big": "general",
+    "small": "general",
+    "good": "general",
+    "bad": "general",
+    "today": "daily",
+    "tomorrow": "daily",
+    "always": "daily",
+    "near": "travel",
+    "beautiful": "travel",
+    # A2
+    "journey": "travel",
+    "polite": "daily",
+    "arrive": "travel",
+    "borrow": "daily",
+    "decide": "general",
+    "accident": "travel",
+    "adventure": "travel",
+    "invitation": "daily",
+    "market": "daily",
+    "advertisement": "business",
+    "neighbour": "daily",
+    "perhaps": "general",
+    "prepare": "daily",
+    "return": "travel",
+    "suddenly": "general",
+    "airport": "travel",
+    "afraid": "general",
+    "careful": "travel",
+    "comfortable": "daily",
+    "crowded": "travel",
+    "almost": "general",
+    "friendly": "travel",
+    "healthy": "daily",
+    "quickly": "daily",
+    "already": "general",
+    "during": "general",
+    "without": "travel",
+    "receive": "technology",
+    "explain": "general",
+    "promise": "general",
+    # B1
+    "opportunity": "business",
+    "convenient": "technology",
+    "achieve": "business",
+    "achievement": "general",
+    "behaviour": "general",
+    "challenge": "business",
+    "communication": "business",
+    "confident": "business",
+    "decision": "travel",
+    "experience": "business",
+    "goal": "general",
+    "habit": "daily",
+    "knowledge": "science",
+    "opinion": "general",
+    "relationship": "daily",
+    "solution": "technology",
+    "advantage": "business",
+    "application": "business",
+    "responsible": "business",
+    "independent": "daily",
+    "likely": "general",
+    "realise": "travel",
+    "recommend": "travel",
+    "avoid": "travel",
+    "compare": "daily",
+    "consider": "general",
+    "afford": "daily",
+    "develop": "technology",
+    "manage": "business",
+    "announce": "business",
+    # B2
+    "significant": "science",
+    "beneficial": "science",
+    "acknowledge": "business",
+    "assumption": "science",
+    "consequence": "business",
+    "controversy": "general",
+    "criterion": "business",
+    "decline": "travel",
+    "emphasis": "general",
+    "evidence": "science",
+    "factor": "business",
+    "impact": "technology",
+    "crucial": "technology",
+    "perspective": "general",
+    "policy": "business",
+    "principle": "general",
+    "relevant": "general",
+    "adequate": "business",
+    "substantial": "business",
+    "tendency": "general",
+    "assess": "business",
+    "clarify": "general",
+    "contribute": "business",
+    "demonstrate": "science",
+    "distinguish": "science",
+    "establish": "science",
+    "maintain": "technology",
+    "negotiate": "business",
+    "overcome": "general",
+    "justify": "science",
+    # C1
+    "comprehensive": "science",
+    "articulate": "general",
+    "corruption": "business",
+    "counterpart": "business",
+    "constraint": "science",
+    "comparable": "science",
+    "implication": "science",
+    "innovation": "technology",
+    "insight": "business",
+    "integrity": "science",
+    "phenomenon": "science",
+    "prevalence": "technology",
+    "rationale": "business",
+    "resilience": "travel",
+    "scrutiny": "business",
+    "synthesis": "science",
+    "viable": "technology",
+    "compelling": "general",
+    "allegation": "business",
+    "nuanced": "general",
+    "profound": "technology",
+    "reluctant": "general",
+    "facilitate": "technology",
+    "formulate": "technology",
+    "enforce": "business",
+    "mitigate": "science",
+    "reinforce": "science",
+    "eligible": "general",
+    "undermine": "general",
+    "advocate": "general",
+    # C2
+    "ubiquitous": "technology",
+    "serendipity": "science",
+    "acquiesce": "business",
+    "anachronism": "technology",
+    "apocryphal": "science",
+    "capricious": "business",
+    "conundrum": "technology",
+    "dichotomy": "science",
+    "equivocal": "general",
+    "meticulous": "general",
+    "incongruous": "travel",
+    "ineffable": "general",
+    "intransigent": "business",
+    "laconic": "general",
+    "magnanimous": "general",
+    "obfuscate": "technology",
+    "parsimonious": "business",
+    "pernicious": "technology",
+    "quintessential": "general",
+    "recalcitrant": "business",
+    "sagacious": "business",
+    "sycophant": "business",
+    "tenuous": "science",
+    "vitriolic": "general",
+    "zeitgeist": "general",
+    "circumspect": "general",
+    "deleterious": "science",
+    "elucidate": "science",
+    "idiosyncratic": "general",
+    "perspicacious": "business",
+}
+
+# Secondary canonical topics for cross-domain words so multi-topic filtering
+# matches realistic contexts while preserving primary `_WORD_TOPICS[word]`.
+_WORD_MULTI_TOPICS: dict[str, tuple[str, ...]] = {
+    "work": ("business", "daily"),
+    "book": ("science", "daily"),
+    "city": ("travel", "daily"),
+    "write": ("business", "daily"),
+    "journey": ("travel", "daily"),
+    "arrive": ("travel", "daily"),
+    "market": ("daily", "business"),
+    "advertisement": ("business", "technology"),
+    "airport": ("travel", "business"),
+    "receive": ("technology", "daily"),
+    "opportunity": ("business", "general"),
+    "convenient": ("technology", "daily"),
+    "communication": ("business", "daily"),
+    "decision": ("travel", "general"),
+    "knowledge": ("science", "general"),
+    "solution": ("technology", "business"),
+    "application": ("business", "technology"),
+    "recommend": ("travel", "daily"),
+    "avoid": ("travel", "daily"),
+    "develop": ("technology", "business"),
+    "evidence": ("science", "business"),
+    "impact": ("technology", "business"),
+    "crucial": ("technology", "general"),
+    "establish": ("science", "business"),
+    "maintain": ("technology", "business"),
+    "comprehensive": ("science", "business"),
+    "innovation": ("technology", "business"),
+    "prevalence": ("technology", "science"),
+    "resilience": ("travel", "daily"),
+    "viable": ("technology", "business"),
+    "facilitate": ("technology", "business"),
+    "formulate": ("technology", "science"),
+    "mitigate": ("science", "business"),
+    "ubiquitous": ("technology", "general"),
+    "serendipity": ("science", "general"),
+    "conundrum": ("technology", "general"),
+    "deleterious": ("science", "general"),
+    "elucidate": ("science", "general"),
+}
+
+
+# Source-audit classification per headword/sense (all entries remain
+# AI_GENERATED + NEEDS_REVIEW until independent editorial sign-off).
+_CONFLICT_WORDS: frozenset[str] = frozenset({
+    # A2 (17): Cambridge vs Oxford level divergence
+    "journey", "arrive", "decide", "market", "neighbour", "prepare", "return",
+    "suddenly", "airport", "afraid", "friendly", "healthy", "quickly",
+    "during", "without", "explain", "promise",
+    # B1 (19): Cambridge vs Oxford level divergence
+    "opportunity", "achieve", "behaviour", "decision", "experience", "goal",
+    "habit", "knowledge", "opinion", "relationship", "solution", "advantage",
+    "likely", "realise", "recommend", "avoid", "compare", "consider", "develop",
+    # B2 (15): Cambridge vs Oxford level divergence
+    "acknowledge", "assumption", "consequence", "controversy", "criterion",
+    "evidence", "factor", "impact", "perspective", "policy", "principle",
+    "substantial", "tendency", "clarify", "negotiate",
+    # C1 (15): Cambridge vs Oxford level divergence
+    "comprehensive", "constraint", "implication", "innovation", "insight",
+    "integrity", "phenomenon", "resilience", "scrutiny", "viable", "profound",
+    "formulate", "reinforce", "undermine", "advocate",
+})
+
+_BLOCKED_WORDS: frozenset[str] = frozenset({
+    # C1 (2): No direct CEFR badge on Cambridge or Oxford sense pages
+    "rationale", "nuanced",
+    # C2 (24): No direct CEFR C2 badge on accessible Oxford/Cambridge/EVP senses
+    "ubiquitous", "serendipity", "anachronism", "capricious", "conundrum",
+    "dichotomy", "equivocal", "incongruous", "ineffable", "laconic",
+    "obfuscate", "parsimonious", "pernicious", "quintessential",
+    "recalcitrant", "sagacious", "sycophant", "tenuous", "vitriolic",
+    "circumspect", "deleterious", "elucidate", "idiosyncratic",
+    "perspicacious",
+})
+
+
+def get_word_audit_status(word: str) -> str:
+    """Return the source-audit classification for a curated CEFR headword."""
+    if word in _CONFLICT_WORDS:
+        return AUDIT_STATUS_CONFLICT
+    if word in _BLOCKED_WORDS:
+        return AUDIT_STATUS_BLOCKED
+    return AUDIT_STATUS_CONFIRMED_SOURCE
+
+
+def get_word_topics(word: str) -> tuple[str, ...]:
+    """Return deduplicated canonical topics for a vocabulary headword."""
+    primary = _WORD_TOPICS[word]
+    configured = _WORD_MULTI_TOPICS.get(word, (primary,))
+    if configured[0] != primary:
+        return tuple(dict.fromkeys((primary, *configured)))
+    return tuple(dict.fromkeys(configured))
+
+
 CEFR_VOCABULARY = [
     {"word": word, "definition": definition, "phonetic": _PHONETICS.get(word, ""),
      "meaning": meaning, "level": level, "part_of_speech": part_of_speech,
+     "topic": _WORD_TOPICS[word],
+     "topics": get_word_topics(word),
      "example": example, "provenance_type": PROVENANCE_AI_GENERATED,
-     "source_reference": None, "qa_status": QA_STATUS_NEEDS_REVIEW}
+     "source_reference": None, "qa_status": QA_STATUS_NEEDS_REVIEW,
+     "audit_status": get_word_audit_status(word)}
     for level in CEFR_LEVELS
     for word, definition, meaning, part_of_speech, example in _ROWS[level]
 ]
+
+
+def get_cefr_audit_summary(items: list[dict] | None = None) -> dict[str, dict[str, int]]:
+    """Return per-level and total counts of CONFIRMED_SOURCE, CONFLICT, and BLOCKED."""
+    vocabulary = CEFR_VOCABULARY if items is None else items
+    summary: dict[str, dict[str, int]] = {
+        level: {
+            AUDIT_STATUS_CONFIRMED_SOURCE: 0,
+            AUDIT_STATUS_CONFLICT: 0,
+            AUDIT_STATUS_BLOCKED: 0,
+            "total": 0,
+        }
+        for level in CEFR_LEVELS
+    }
+    totals = {
+        AUDIT_STATUS_CONFIRMED_SOURCE: 0,
+        AUDIT_STATUS_CONFLICT: 0,
+        AUDIT_STATUS_BLOCKED: 0,
+        "total": 0,
+    }
+    for item in vocabulary:
+        lvl = item["level"]
+        status = item.get("audit_status") or get_word_audit_status(item["word"])
+        summary[lvl][status] += 1
+        summary[lvl]["total"] += 1
+        totals[status] += 1
+        totals["total"] += 1
+    summary["TOTAL"] = totals
+    return summary
+
+
+def build_cefr_seed_tags(item: dict) -> dict[str, object]:
+    """Build structured PortableJSON tags preserving provenance, QA state, and canonical topic(s)."""
+    raw_topics = item.get("topics") or (item["topic"],)
+    topics = list(dict.fromkeys(raw_topics))
+    payload: dict[str, object] = {
+        "source": item["provenance_type"],
+        "source_reference": item["source_reference"],
+        "qa_status": item["qa_status"],
+        "topic": topics,
+    }
+    audit_status = item.get("audit_status") or get_word_audit_status(item["word"])
+    if audit_status:
+        payload["audit_status"] = audit_status
+    return payload
 
 
 def validate_cefr_vocabulary(items: list[dict] | None = None) -> None:
@@ -248,12 +597,21 @@ def validate_cefr_vocabulary(items: list[dict] | None = None) -> None:
     duplicates = [word for word, count in Counter(words).items() if count > 1]
     if duplicates:
         raise ValueError(f"Duplicate vocabulary words: {duplicates}")
+    overlap = _CONFLICT_WORDS & _BLOCKED_WORDS
+    if overlap:
+        raise ValueError(f"Words cannot be both CONFLICT and BLOCKED: {sorted(overlap)}")
+    word_set = set(words)
+    unknown_audit_words = (_CONFLICT_WORDS | _BLOCKED_WORDS) - word_set
+    if unknown_audit_words:
+        raise ValueError(f"Audit sets reference unknown words: {sorted(unknown_audit_words)}")
+
     required = {
         "word",
         "definition",
         "meaning",
         "level",
         "part_of_speech",
+        "topic",
         "example",
         "provenance_type",
         "qa_status",
@@ -266,6 +624,12 @@ def validate_cefr_vocabulary(items: list[dict] | None = None) -> None:
             raise ValueError(f"Invalid headword format: {item['word']}")
         if item["part_of_speech"] not in PARTS_OF_SPEECH:
             raise ValueError(f"Unsupported part of speech for {item['word']}: {item['part_of_speech']}")
+        if item["topic"] not in CANONICAL_TOPICS:
+            raise ValueError(f"Unsupported topic for {item['word']}: {item['topic']}")
+        topics = item.get("topics") or (item["topic"],)
+        for topic in topics:
+            if topic not in CANONICAL_TOPICS:
+                raise ValueError(f"Unsupported topic for {item['word']}: {topic}")
         if len(item["definition"].split()) < 3:
             raise ValueError(f"Definition is too short: {item['word']}")
         if len(item["example"].split()) < 4:
@@ -293,6 +657,14 @@ def validate_cefr_vocabulary(items: list[dict] | None = None) -> None:
             raise ValueError(f"Verified item lacks source evidence: {item['word']}")
         if provenance_type == PROVENANCE_AI_GENERATED and qa_status != QA_STATUS_NEEDS_REVIEW:
             raise ValueError(f"AI-generated item must remain NEEDS_REVIEW: {item['word']}")
+        audit_status = item.get("audit_status")
+        if audit_status is not None and audit_status not in _ALLOWED_AUDIT_STATUSES:
+            raise ValueError(f"Unsupported audit status for {item['word']}: {audit_status}")
+
+    topic_counts = Counter(item["topic"] for item in vocabulary)
+    missing_topics = [topic for topic in CANONICAL_TOPICS if topic_counts[topic] == 0]
+    if missing_topics:
+        raise ValueError(f"Missing canonical topic coverage: {missing_topics}")
 
 
 validate_cefr_vocabulary()

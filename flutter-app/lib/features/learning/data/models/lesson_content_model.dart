@@ -14,6 +14,8 @@ class LessonContentModel {
   final int estimatedMinutes;
   final int totalExercises;
   final List<ExerciseModel> exercises;
+  final GrammarTheoryEntity? grammarTheory;
+  final bool theoryViewed;
 
   LessonContentModel({
     required this.id,
@@ -27,6 +29,8 @@ class LessonContentModel {
     required this.estimatedMinutes,
     required this.totalExercises,
     required this.exercises,
+    this.grammarTheory,
+    this.theoryViewed = false,
   });
 
   factory LessonContentModel.fromJson(Map<String, dynamic> json) {
@@ -46,6 +50,12 @@ class LessonContentModel {
               ?.map((e) => ExerciseModel.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
+      grammarTheory: json['grammar_theory'] is Map<String, dynamic>
+          ? GrammarTheoryEntity.fromJson(
+              json['grammar_theory'] as Map<String, dynamic>,
+            )
+          : null,
+      theoryViewed: json['theory_viewed'] as bool? ?? false,
     );
   }
 
@@ -60,6 +70,8 @@ class LessonContentModel {
       exercises: exercises.map((e) => e.toEntity()).toList(),
       estimatedMinutes: estimatedMinutes,
       xpReward: xpReward,
+      grammarTheory: grammarTheory,
+      theoryViewed: theoryViewed,
     );
   }
 }

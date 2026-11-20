@@ -27900,6 +27900,586 @@
           "intermediateFill": null
         }
       }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/fill_blank_screen.dart::_FillBlankScreenState::Card::0",
+      "path": "lib/features/games/presentation/screens/fill_blank_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_FillBlankScreenState",
+      "callKind": "Card",
+      "ordinal": 0,
+      "line": 684,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/grammar_quiz_screen.dart::_GrammarQuizScreenState::Card::0",
+      "path": "lib/features/games/presentation/screens/grammar_quiz_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_GrammarQuizScreenState",
+      "callKind": "Card",
+      "ordinal": 0,
+      "line": 739,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/hangman_screen.dart::_HangmanScreenState::Card::0",
+      "path": "lib/features/games/presentation/screens/hangman_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_HangmanScreenState",
+      "callKind": "Card",
+      "ordinal": 0,
+      "line": 653,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/matching_game_screen.dart::_MatchingGameScreenState::Card::0",
+      "path": "lib/features/games/presentation/screens/matching_game_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_MatchingGameScreenState",
+      "callKind": "Card",
+      "ordinal": 0,
+      "line": 481,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/matching_game_screen.dart::_MatchingGameScreenState::BoxDecoration::0",
+      "path": "lib/features/games/presentation/screens/matching_game_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_MatchingGameScreenState",
+      "callKind": "BoxDecoration",
+      "ordinal": 0,
+      "line": 612,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/matching_game_screen.dart::_MatchingGameScreenState::BoxDecoration::1",
+      "path": "lib/features/games/presentation/screens/matching_game_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_MatchingGameScreenState",
+      "callKind": "BoxDecoration",
+      "ordinal": 1,
+      "line": 654,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/spelling_bee_screen.dart::_SpellingBeeScreenState::Card::0",
+      "path": "lib/features/games/presentation/screens/spelling_bee_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_SpellingBeeScreenState",
+      "callKind": "Card",
+      "ordinal": 0,
+      "line": 627,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/word_scramble_screen.dart::_WordScrambleScreenState::Card::1",
+      "path": "lib/features/games/presentation/screens/word_scramble_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_WordScrambleScreenState",
+      "callKind": "Card",
+      "ordinal": 1,
+      "line": 693,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/screens/word_scramble_screen.dart::LetterTile::BoxDecoration::0",
+      "path": "lib/features/games/presentation/screens/word_scramble_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "LetterTile",
+      "callKind": "BoxDecoration",
+      "ordinal": 0,
+      "line": 899,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/widgets/game_answer_explanation.dart::GameAnswerExplanationCard::Card::0",
+      "path": "lib/features/games/presentation/widgets/game_answer_explanation.dart",
+      "entryPoint": "surface",
+      "symbol": "GameAnswerExplanationCard",
+      "callKind": "Card",
+      "ordinal": 0,
+      "line": 13,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/widgets/game_answer_explanation.dart::GameAnswerExplanationCard::BoxDecoration::0",
+      "path": "lib/features/games/presentation/widgets/game_answer_explanation.dart",
+      "entryPoint": "surface",
+      "symbol": "GameAnswerExplanationCard",
+      "callKind": "BoxDecoration",
+      "ordinal": 0,
+      "line": 43,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/games/presentation/widgets/game_question_navigation.dart::GameQuestionProgress::BoxDecoration::0",
+      "path": "lib/features/games/presentation/widgets/game_question_navigation.dart",
+      "entryPoint": "surface",
+      "symbol": "GameQuestionProgress",
+      "callKind": "BoxDecoration",
+      "ordinal": 0,
+      "line": 41,
+      "category": "eligible",
+      "group": 5,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/learning/presentation/screens/learning_session_screen.dart::_LearningSessionScreenState::Card::0",
+      "path": "lib/features/learning/presentation/screens/learning_session_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_LearningSessionScreenState",
+      "callKind": "Card",
+      "ordinal": 0,
+      "line": 985,
+      "category": "eligible",
+      "group": 2,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/learning/presentation/screens/learning_session_screen.dart::_LearningSessionScreenState::Card::1",
+      "path": "lib/features/learning/presentation/screens/learning_session_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_LearningSessionScreenState",
+      "callKind": "Card",
+      "ordinal": 1,
+      "line": 1028,
+      "category": "eligible",
+      "group": 2,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/level/presentation/pages/placement_test_page.dart::_QuestionState::BoxDecoration::1",
+      "path": "lib/features/level/presentation/pages/placement_test_page.dart",
+      "entryPoint": "surface",
+      "symbol": "_QuestionState",
+      "callKind": "BoxDecoration",
+      "ordinal": 1,
+      "line": 333,
+      "category": "eligible",
+      "group": 2,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/level/presentation/pages/placement_test_page.dart::_QuestionState::BoxDecoration::2",
+      "path": "lib/features/level/presentation/pages/placement_test_page.dart",
+      "entryPoint": "surface",
+      "symbol": "_QuestionState",
+      "callKind": "BoxDecoration",
+      "ordinal": 2,
+      "line": 367,
+      "category": "eligible",
+      "group": 2,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/level/presentation/pages/placement_test_page.dart::_QuestionState::BoxDecoration::3",
+      "path": "lib/features/level/presentation/pages/placement_test_page.dart",
+      "entryPoint": "surface",
+      "symbol": "_QuestionState",
+      "callKind": "BoxDecoration",
+      "ordinal": 3,
+      "line": 388,
+      "category": "eligible",
+      "group": 2,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/level/presentation/pages/placement_test_page.dart::_QuestionState::BoxDecoration::4",
+      "path": "lib/features/level/presentation/pages/placement_test_page.dart",
+      "entryPoint": "surface",
+      "symbol": "_QuestionState",
+      "callKind": "BoxDecoration",
+      "ordinal": 4,
+      "line": 446,
+      "category": "eligible",
+      "group": 2,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/level/presentation/pages/placement_test_page.dart::_ResultState::BoxDecoration::2",
+      "path": "lib/features/level/presentation/pages/placement_test_page.dart",
+      "entryPoint": "surface",
+      "symbol": "_ResultState",
+      "callKind": "BoxDecoration",
+      "ordinal": 2,
+      "line": 680,
+      "category": "eligible",
+      "group": 2,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/mistakes/presentation/pages/mistake_notebook_page.dart::_MistakeNotebookPageState::showDialog::1",
+      "path": "lib/features/mistakes/presentation/pages/mistake_notebook_page.dart",
+      "entryPoint": "overlay",
+      "symbol": "_MistakeNotebookPageState",
+      "callKind": "showDialog",
+      "ordinal": 1,
+      "line": 69,
+      "category": "eligible",
+      "group": 7,
+      "status": "inventoried"
+    },
+    {
+      "id": "lib/features/podcast/presentation/screens/podcast_player_screen.dart::_PodcastPlayerScreenState::BoxDecoration::2",
+      "path": "lib/features/podcast/presentation/screens/podcast_player_screen.dart",
+      "entryPoint": "surface",
+      "symbol": "_PodcastPlayerScreenState",
+      "callKind": "BoxDecoration",
+      "ordinal": 2,
+      "line": 462,
+      "category": "eligible",
+      "group": 4,
+      "status": "planned",
+      "colors": {
+        "light": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        },
+        "dark": {
+          "accent": null,
+          "fill": null,
+          "pageBackground": null,
+          "intermediateFill": null
+        }
+      }
+    },
+    {
+      "id": "lib/features/progress/presentation/screens/my_progress_screen.dart::_MyProgressScreenState::Navigator.push::0",
+      "path": "lib/features/progress/presentation/screens/my_progress_screen.dart",
+      "entryPoint": "imperativeRoute",
+      "symbol": "_MyProgressScreenState",
+      "callKind": "Navigator.push",
+      "ordinal": 0,
+      "line": 191,
+      "category": "eligible",
+      "group": 1,
+      "status": "inventoried"
+    },
+    {
+      "id": "lib/features/progress/presentation/screens/my_progress_screen.dart::_MyProgressScreenState::MaterialPageRoute::0",
+      "path": "lib/features/progress/presentation/screens/my_progress_screen.dart",
+      "entryPoint": "imperativeRoute",
+      "symbol": "_MyProgressScreenState",
+      "callKind": "MaterialPageRoute",
+      "ordinal": 0,
+      "line": 193,
+      "category": "eligible",
+      "group": 1,
+      "status": "inventoried"
+    },
+    {
+      "id": "lib/features/vocabulary/presentation/providers/vocab_provider.dart::VocabProvider::namedRoute::0",
+      "path": "lib/features/vocabulary/presentation/providers/vocab_provider.dart",
+      "entryPoint": "namedRoute",
+      "symbol": "VocabProvider",
+      "callKind": "namedRoute",
+      "ordinal": 0,
+      "line": 380,
+      "category": "eligible",
+      "group": 5,
+      "status": "inventoried"
+    },
+    {
+      "id": "lib/main.dart::_LexiLingoAppState::namedRoute::24",
+      "path": "lib/main.dart",
+      "entryPoint": "namedRoute",
+      "symbol": "_LexiLingoAppState",
+      "callKind": "namedRoute",
+      "ordinal": 24,
+      "line": 551,
+      "category": "eligible",
+      "group": 1,
+      "status": "inventoried"
     }
   ],
   "boundaries": [

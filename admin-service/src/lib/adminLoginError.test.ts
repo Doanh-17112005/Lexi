@@ -17,6 +17,9 @@ describe("getAdminLoginErrorMessage", () => {
     expect(getAdminLoginErrorMessage(new ApiError("Admin privileges required", 403))).toBe(
       "Tài khoản không có quyền truy cập Admin Dashboard."
     );
+    expect(
+      getAdminLoginErrorMessage(new Error("Tài khoản không có quyền truy cập Admin Dashboard."))
+    ).toBe("Tài khoản không có quyền truy cập Admin Dashboard.");
   });
 
   it("maps service and browser network failures without exposing raw errors", () => {

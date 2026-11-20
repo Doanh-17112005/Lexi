@@ -417,16 +417,16 @@ async def transcribe_audio(
         token_cost=default_token_cost_for_endpoint("stt.transcribe"),
         fail_closed=True,
     )
-    config = get_stt_config()
-    requested_suffix = os.path.splitext(audio.filename or "")[1].lower()
-    suffix = (
-        requested_suffix
-        if requested_suffix in {".wav", ".mp3", ".m4a", ".ogg", ".webm", ".flac"}
-        else ".audio"
-    )
     path = None
     total = 0
     try:
+        config = get_stt_config()
+        requested_suffix = os.path.splitext(audio.filename or "")[1].lower()
+        suffix = (
+            requested_suffix
+            if requested_suffix in {".wav", ".mp3", ".m4a", ".ogg", ".webm", ".flac"}
+            else ".audio"
+        )
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
             path = handle.name
             first_chunk = True
@@ -455,6 +455,15 @@ async def transcribe_audio(
             }
         )
         return {"success": True, **result, "model": "faster-whisper"}
+    except HTTPException:
+        raise
+    except (ModuleNotFoundError, ImportError, RuntimeError, FileNotFoundError) as exc:
+        detail = str(exc) or "Speech-to-text engine unavailable"
+        logger.warning("STT /transcribe engine unavailable: %s", detail)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Speech-to-text unavailable: {detail}",
+        ) from exc
     finally:
         if path:
             os.unlink(path)

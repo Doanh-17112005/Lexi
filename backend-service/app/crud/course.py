@@ -198,6 +198,31 @@ class CourseCRUD:
         )
         return set(result.scalars().all())
 
+    @staticmethod
+    async def get_enrolled_course_progress(
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        course_ids: List[uuid.UUID],
+    ) -> dict[uuid.UUID, float]:
+        """Batch fetch enrollment progress percentages for courses."""
+        if not course_ids:
+            return {}
+        result = await db.execute(
+            select(
+                UserCourseProgress.course_id,
+                UserCourseProgress.progress_percentage,
+            ).where(
+                and_(
+                    UserCourseProgress.user_id == user_id,
+                    UserCourseProgress.course_id.in_(course_ids),
+                )
+            )
+        )
+        return {
+            course_id: float(progress_percentage or 0.0)
+            for course_id, progress_percentage in result.all()
+        }
+
 
 # =====================
 # Unit CRUD

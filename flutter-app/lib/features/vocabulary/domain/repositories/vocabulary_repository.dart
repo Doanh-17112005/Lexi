@@ -49,6 +49,7 @@ abstract class VocabularyRepository {
     String userVocabularyId,
     ReviewQuality quality, {
     int? timeSpentMs,
+    String? idempotencyKey,
   });
 
   /// Evaluate pronunciation for a vocabulary item

@@ -16,7 +16,7 @@ Covers:
 """
 
 import pytest
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 
@@ -189,7 +189,7 @@ class TestGetMyProgress:
         # Mock DailyActivity
         from app.models.progress import DailyActivity
         mock_activity = DailyActivity(
-            activity_date=date.today(),
+            activity_date=datetime.now(timezone.utc).date(),
             xp_earned=50,
             lessons_completed=2,
             study_time_minutes=15,
@@ -386,7 +386,7 @@ class TestGetStreak:
         mock_streak.current_streak = 5
         mock_streak.longest_streak = 10
         mock_streak.total_days_active = 20
-        mock_streak.last_activity_date = date.today()
+        mock_streak.last_activity_date = datetime.now(timezone.utc).date()
         mock_streak.freeze_count = 2
         mock_result.scalar_one_or_none.return_value = mock_streak
         response = await client.get(f"{BASE}/streak")
@@ -444,7 +444,7 @@ class TestUpdateStreak:
     @pytest.mark.asyncio
     async def test_increments_streak_on_consecutive_day(self, auth_client):
         client, mock_session, mock_result, _ = auth_client
-        yesterday = date.today() - timedelta(days=1)
+        yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
         mock_streak = MagicMock()
         mock_streak.current_streak = 3
         mock_streak.longest_streak = 5
@@ -468,7 +468,7 @@ class TestUpdateStreak:
         mock_streak = MagicMock()
         mock_streak.current_streak = 1
         mock_streak.longest_streak = 1
-        mock_streak.last_activity_date = date.today()
+        mock_streak.last_activity_date = datetime.now(timezone.utc).date()
         mock_streak.freeze_count = 0
         mock_streak.total_days_active = 1
         mock_result.scalar_one_or_none.return_value = mock_streak
@@ -517,7 +517,7 @@ class TestUseStreakFreeze:
         client, mock_session, mock_result, _ = auth_client
         mock_streak = MagicMock()
         mock_streak.freeze_count = 2
-        mock_streak.last_activity_date = date.today()
+        mock_streak.last_activity_date = datetime.now(timezone.utc).date()
         mock_result.scalar_one_or_none.return_value = mock_streak
         response = await client.post(f"{BASE}/streak/freeze")
         assert response.status_code == 400
@@ -526,7 +526,7 @@ class TestUseStreakFreeze:
     @pytest.mark.asyncio
     async def test_uses_freeze_successfully(self, auth_client):
         client, mock_session, mock_result, _ = auth_client
-        yesterday = date.today() - timedelta(days=1)
+        yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
         mock_streak = MagicMock()
         mock_streak.freeze_count = 2
         mock_streak.last_activity_date = yesterday
@@ -653,7 +653,7 @@ class TestRestoreStreak:
         mock_streak = MagicMock()
         mock_streak.previous_streak = 5
         mock_streak.restores_used_this_month = 3
-        mock_streak.last_restore_date = date.today()
+        mock_streak.last_restore_date = datetime.now(timezone.utc).date()
         mock_result.scalar_one_or_none.return_value = mock_streak
         
         response = await client.post(f"{BASE}/streak/restore")
@@ -667,11 +667,11 @@ class TestRestoreStreak:
         mock_streak.previous_streak = 10
         mock_streak.restores_used_this_month = 1
         mock_streak.longest_streak = 8
-        mock_streak.last_restore_date = date.today()
+        mock_streak.last_restore_date = datetime.now(timezone.utc).date()
         mock_streak.current_streak = 1
         mock_streak.total_days_active = 5
         mock_streak.freeze_count = 0
-        mock_streak.last_activity_date = date.today()
+        mock_streak.last_activity_date = datetime.now(timezone.utc).date()
         mock_streak.last_reward_claim_date = None
         mock_result.scalar_one_or_none.return_value = mock_streak
         
@@ -701,7 +701,7 @@ class TestClaimDailyReward:
     async def test_claim_no_activity_today(self, auth_client):
         client, mock_session, mock_result, _ = auth_client
         mock_streak = MagicMock()
-        mock_streak.last_activity_date = date.today() - timedelta(days=1)
+        mock_streak.last_activity_date = datetime.now(timezone.utc).date() - timedelta(days=1)
         mock_result.scalar_one_or_none.return_value = mock_streak
         
         response = await client.post(f"{BASE}/streak/claim-daily-reward")
@@ -712,8 +712,8 @@ class TestClaimDailyReward:
     async def test_claim_already_claimed_today(self, auth_client):
         client, mock_session, mock_result, _ = auth_client
         mock_streak = MagicMock()
-        mock_streak.last_activity_date = date.today()
-        mock_streak.last_reward_claim_date = date.today()
+        mock_streak.last_activity_date = datetime.now(timezone.utc).date()
+        mock_streak.last_reward_claim_date = datetime.now(timezone.utc).date()
         mock_result.scalar_one_or_none.return_value = mock_streak
         
         response = await client.post(f"{BASE}/streak/claim-daily-reward")
@@ -725,7 +725,7 @@ class TestClaimDailyReward:
         client, mock_session, mock_result, _ = auth_client
         mock_streak = MagicMock()
         mock_streak.current_streak = 5 # Day 5 reward should be 25 gems (cycle index 4: 5, 10, 15, 20, 25, 30, 50)
-        mock_streak.last_activity_date = date.today()
+        mock_streak.last_activity_date = datetime.now(timezone.utc).date()
         mock_streak.last_reward_claim_date = None
         mock_result.scalar_one_or_none.return_value = mock_streak
         
@@ -742,3 +742,106 @@ class TestClaimDailyReward:
         assert data["total_gems"] == 100
         assert data["current_streak"] == 5
         assert data["is_daily_reward_available"] is False
+
+
+class TestLessonCompletionToDashboardPipeline:
+    """T06 integration tests for lesson completion -> /me + /weekly consistency."""
+
+    @pytest.mark.asyncio
+    async def test_lesson_completion_updates_summary_weekly_and_course_once(
+        self,
+        async_client: AsyncClient,
+        auth_headers: dict,
+        db_session,
+        test_user,
+    ):
+        from app.models.course import Course, Lesson, Unit
+        from app.models.progress import UserCourseProgress
+
+        course = Course(
+            title="T06 Dashboard Course",
+            description="Pipeline check",
+            language="en",
+            level="A1",
+            total_lessons=2,
+            is_published=True,
+        )
+        db_session.add(course)
+        await db_session.flush()
+
+        unit = Unit(
+            course_id=course.id,
+            title="Unit 1",
+            description="Unit 1",
+            order_index=1,
+            total_lessons=2,
+        )
+        db_session.add(unit)
+        await db_session.flush()
+
+        lesson = Lesson(
+            course_id=course.id,
+            unit_id=unit.id,
+            title="Lesson 1",
+            description="Lesson 1",
+            order_index=1,
+            xp_reward=40,
+            pass_threshold=80,
+            content={"exercises": []},
+        )
+        lesson2 = Lesson(
+            course_id=course.id,
+            unit_id=unit.id,
+            title="Lesson 2",
+            description="Lesson 2",
+            order_index=2,
+            xp_reward=40,
+            pass_threshold=80,
+            content={"exercises": []},
+        )
+        db_session.add_all([lesson, lesson2])
+        await db_session.flush()
+
+        db_session.add(
+            UserCourseProgress(
+                user_id=test_user.id,
+                course_id=course.id,
+                progress_percentage=0.0,
+                lessons_completed=0,
+            )
+        )
+        await db_session.commit()
+
+        # First passing completion awards XP and updates progress + weekly activity
+        first = await async_client.post(
+            f"{BASE}/lessons/{lesson.id}/complete",
+            headers=auth_headers,
+            json={"lesson_id": str(lesson.id), "score": 95.0},
+        )
+        assert first.status_code == 200
+        first_data = first.json()["data"]
+        assert first_data["is_passed"] is True
+        assert first_data["xp_earned"] == 40
+        assert first_data["course_progress"] == 50.0
+
+        # Replay same lesson should NOT duplicate XP or lessons_completed
+        replay = await async_client.post(
+            f"{BASE}/lessons/{lesson.id}/complete",
+            headers=auth_headers,
+            json={"lesson_id": str(lesson.id), "score": 95.0},
+        )
+        assert replay.status_code == 200
+        assert replay.json()["data"]["xp_earned"] == 0
+
+        me_res = await async_client.get(f"{BASE}/me", headers=auth_headers)
+        assert me_res.status_code == 200
+        me_data = me_res.json()["data"]
+        assert me_data["summary"]["lessons_completed"] == 1
+        assert me_data["summary"]["total_xp"] == 40
+        assert me_data["course_progress"][0]["progress_percentage"] == 50.0
+
+        weekly_res = await async_client.get(f"{BASE}/weekly", headers=auth_headers)
+        assert weekly_res.status_code == 200
+        weekly_data = weekly_res.json()["data"]
+        assert weekly_data["total_xp"] == 40
+        assert weekly_data["total_lessons"] == 1

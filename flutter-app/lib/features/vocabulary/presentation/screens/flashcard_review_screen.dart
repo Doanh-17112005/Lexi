@@ -102,6 +102,11 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen>
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () {
+            final provider = context.read<FlashcardProvider>();
+            if (!provider.hasSession) {
+              _exitReviewScreen(context, provider);
+              return;
+            }
             _showExitDialog(context);
           },
         ),
@@ -239,23 +244,38 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen>
     );
   }
 
+  void _exitReviewScreen(BuildContext context, FlashcardProvider provider) {
+    provider.endSession();
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+    } else {
+      navigator.pushReplacementNamed('/');
+    }
+  }
+
   void _showExitDialog(BuildContext context) {
+    final provider = context.read<FlashcardProvider>();
+    final navigator = Navigator.of(context);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: Text('flashcard.exitReviewTitle'.tr()),
         content: Text('flashcard.exitReviewMessage'.tr()),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: Text('common.cancel'.tr()),
           ),
           TextButton(
             onPressed: () {
-              final provider = context.read<FlashcardProvider>();
               provider.endSession();
-              Navigator.of(context).pop(); // Close dialog
-              Navigator.of(context).pop(); // Close screen
+              Navigator.of(dialogContext).pop(); // Close dialog
+              if (navigator.canPop()) {
+                navigator.pop(); // Close screen
+              } else {
+                navigator.pushReplacementNamed('/');
+              }
             },
             child: Text(
               'lesson.exit'.tr(),

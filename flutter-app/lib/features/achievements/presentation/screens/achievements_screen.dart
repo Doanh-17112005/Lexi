@@ -314,14 +314,16 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             // Handle bar
             Container(
               width: 40,
@@ -433,6 +435,7 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
             ],
             const SizedBox(height: 16),
           ],
+        ),
         ),
       ),
     );

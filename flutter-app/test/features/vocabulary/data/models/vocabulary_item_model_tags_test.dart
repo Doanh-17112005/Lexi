@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_item_model.dart';
+import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_tags.dart';
 
 Map<String, dynamic> _itemJson(Object? tags) => {
   'id': '7f313ad4-2e6e-43f4-8231-27089da4cb64',
@@ -44,6 +45,64 @@ void main() {
       );
 
       expect(item.tags, ['ai_generated', 'daily', 'travel', 'needs_review']);
+    });
+
+    test('normalizes daily aliases and exposes canonical system topics', () {
+      expect(canonicalSystemTopics, [
+        'general',
+        'travel',
+        'business',
+        'daily',
+        'science',
+        'technology',
+      ]);
+      expect(normalizeVocabularyTopic('daily_life'), 'daily');
+      expect(normalizeVocabularyTopic('daily-life'), 'daily');
+      expect(normalizeVocabularyTopic(' daily life '), 'daily');
+      expect(normalizeVocabularyTopic('  Travel '), 'travel');
+      expect(normalizeVocabularyTopic('   '), isNull);
+      expect(normalizeVocabularyTopic(null), isNull);
+    });
+
+    test('distinguishes published vs draft vs quarantined publication states', () {
+      expect(
+        classifyVocabularyPublication(null),
+        ContentPublicationStatus.published,
+      );
+      expect(isVocabularyPublishedForLearner(['general']), isTrue);
+      expect(
+        classifyVocabularyPublication({
+          'source': 'SOURCE_VERIFIED',
+          'qa_status': 'VERIFIED',
+          'audit_status': 'CONFIRMED_SOURCE',
+          'topic': ['business'],
+        }),
+        ContentPublicationStatus.published,
+      );
+      expect(
+        classifyVocabularyPublication({
+          'source': 'AI_GENERATED',
+          'qa_status': 'NEEDS_REVIEW',
+          'audit_status': 'CONFIRMED_SOURCE',
+        }),
+        ContentPublicationStatus.draft,
+      );
+      expect(
+        isVocabularyPublishedForLearner({
+          'source': 'AI_GENERATED',
+          'qa_status': 'NEEDS_REVIEW',
+          'audit_status': 'CONFLICT',
+        }),
+        isFalse,
+      );
+      expect(
+        classifyVocabularyPublication({
+          'source': 'AI_GENERATED',
+          'qa_status': 'NEEDS_REVIEW',
+          'audit_status': 'BLOCKED',
+        }),
+        ContentPublicationStatus.quarantined,
+      );
     });
   });
 }

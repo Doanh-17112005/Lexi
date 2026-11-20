@@ -5,6 +5,7 @@ import 'package:lexilingo_app/core/error/exceptions.dart';
 import 'package:lexilingo_app/core/services/local_cache_service.dart';
 import 'package:lexilingo_app/features/vocabulary/data/models/pronunciation_evaluation_model.dart';
 import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_item_model.dart';
+import 'package:lexilingo_app/features/vocabulary/data/models/vocabulary_tags.dart';
 import 'package:lexilingo_app/features/vocabulary/data/models/user_vocabulary_model.dart';
 import 'package:lexilingo_app/features/vocabulary/data/models/review_result_model.dart';
 
@@ -44,6 +45,7 @@ abstract class VocabularyRemoteDataSource {
     String userVocabularyId,
     int quality, {
     int? timeSpentMs,
+    String? idempotencyKey,
   });
 
   /// Evaluate a pronunciation recording for one vocabulary item
@@ -104,12 +106,16 @@ class VocabularyRemoteDataSourceImpl implements VocabularyRemoteDataSource {
       final response = await apiClient.get(uri.toString());
       final data = _readList(response);
 
-      return data.map((json) {
-        if (json is! Map<String, dynamic>) {
-          throw ServerException('Invalid vocabulary item response');
-        }
-        return VocabularyItemModel.fromJson(json);
-      }).toList();
+      return data
+          .map((json) {
+            if (json is! Map<String, dynamic>) {
+              throw ServerException('Invalid vocabulary item response');
+            }
+            return json;
+          })
+          .where((json) => isVocabularyPublishedForLearner(json['tags']))
+          .map(VocabularyItemModel.fromJson)
+          .toList();
     } on ServerException {
       rethrow;
     } catch (e) {
@@ -205,11 +211,13 @@ class VocabularyRemoteDataSourceImpl implements VocabularyRemoteDataSource {
     String userVocabularyId,
     int quality, {
     int? timeSpentMs,
+    String? idempotencyKey,
   }) async {
     try {
       final body = ReviewSubmissionModel(
         quality: quality,
         timeSpentMs: timeSpentMs,
+        idempotencyKey: idempotencyKey,
       ).toJson();
 
       final response = await apiClient.post(

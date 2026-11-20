@@ -1562,7 +1562,8 @@
     "startLesson": "Start Lesson",
     "correct": "Correct!",
     "notQuite": "Not quite",
-    "loadingRoadmap": "Loading roadmap…"
+    "loadingRoadmap": "Loading roadmap…",
+    "lessonLockedHint": "Complete the previous lesson to unlock this one."
   },
   "books": {
     "library": "Book Library",

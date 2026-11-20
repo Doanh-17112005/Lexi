@@ -79,6 +79,9 @@ async def test_content_interaction_is_ingested_and_bumps_interaction_epoch(
         async def get(self, key):
             return self.store.get(key)
 
+        async def exists(self, *keys):
+            return sum(1 for key in keys if key in self.store)
+
         async def incr(self, key):
             self.store[key] = self.store.get(key, 0) + 1
             return self.store[key]

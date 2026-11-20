@@ -48,7 +48,10 @@ void main() {
       skillRecorder: spy,
     );
 
-    await provider.loadQuiz('article-1');
+    await provider.loadQuiz(
+      'article-1',
+      article: const NewsArticle(id: 'article-1', title: 'News Article 1'),
+    );
     answers.forEach(provider.answerQuestion);
     provider.submitQuiz();
     await Future<void>.delayed(Duration.zero);

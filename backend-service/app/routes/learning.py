@@ -13,12 +13,15 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from app.core.database import get_db
-from app.core.cache import build_cache_key, delete_cached
+from app.core.cache import build_cache_key, delete_cached, get_cached, set_cached
 from app.core.config import settings
 from app.core.dependencies import get_current_user
 from app.services.learner_state import record_concept_observation
+from app.services.roadmap_unlock_policy import evaluate_course_unlocks
 from app.services.streak_service import record_daily_activity, update_user_streak
 from app.models.user import User
+from app.models.content import GrammarItem
+from app.models.user_grammar_item import UserGrammarItem
 from app.models.course import Course, Unit, Lesson
 from app.models.progress import (
     UserProgress,
@@ -40,7 +43,13 @@ from app.schemas.progress import (
     UnitProgressRoadmap,
     LessonProgressItem,
 )
-from app.schemas.course import LessonContentResponse, Exercise, ExerciseOption
+from app.schemas.course import (
+    GrammarTheoryResponse,
+    LessonContentResponse,
+    TheoryViewedResponse,
+    Exercise,
+    ExerciseOption,
+)
 from app.schemas.response import ApiResponse
 from app.services import check_achievements_for_user
 from app.services.proficiency_service import ProficiencyService
@@ -48,6 +57,7 @@ from app.services.skill_attribution import attribute_exercises
 from app.schemas.proficiency import ExerciseResult, ProficiencyLevel, SkillType
 from app.routes.proficiency import record_exercise_results_for_user
 from app.crud.progress import ProgressCRUD
+from app.services.content_publication_policy import is_lesson_learner_visible
 from app.services.level_service import (
     LevelService,
     calculate_numeric_level,
@@ -75,6 +85,122 @@ def _sanitize_lesson_context(value):
     return value
 
 
+def _parse_optional_uuid(raw_id) -> Optional[UUID]:
+    if not raw_id:
+        return None
+    if isinstance(raw_id, UUID):
+        return raw_id
+    try:
+        return UUID(str(raw_id))
+    except (ValueError, TypeError):
+        return None
+
+
+async def _resolve_grammar_theory(
+    db: AsyncSession,
+    lesson: Lesson,
+    exercises: List[Exercise],
+) -> Optional[GrammarTheoryResponse]:
+    """Build sanitized learner-facing grammar theory when linked or required."""
+    raw_content = lesson.content if isinstance(lesson.content, dict) else {}
+    sanitized = _sanitize_lesson_context(raw_content)
+
+    grammar_item_id = _parse_optional_uuid(
+        sanitized.get("grammar_item_id") or sanitized.get("grammar_id")
+    )
+    grammar_item: Optional[GrammarItem] = None
+    if grammar_item_id is not None:
+        item_res = await db.execute(
+            select(GrammarItem).where(
+                and_(
+                    GrammarItem.id == grammar_item_id,
+                    GrammarItem.is_active == True,
+                )
+            )
+        )
+        grammar_item = item_res.scalar_one_or_none()
+
+    raw_theory = sanitized.get("theory")
+    grammar_points = sanitized.get("grammar_points") or []
+    if not isinstance(grammar_points, list):
+        grammar_points = []
+
+    linked_ids = [str(ex.id) for ex in exercises]
+
+    if grammar_item is not None:
+        raw_examples = grammar_item.examples if isinstance(grammar_item.examples, list) else []
+        return GrammarTheoryResponse(
+            grammar_item_id=grammar_item.id,
+            version=grammar_item.updated_at.isoformat() if grammar_item.updated_at else None,
+            title=grammar_item.title,
+            level=grammar_item.level,
+            topic=grammar_item.topic,
+            summary=grammar_item.summary,
+            explanation=grammar_item.content,
+            examples=_sanitize_lesson_context(raw_examples),
+            grammar_points=grammar_points,
+            linked_exercise_ids=linked_ids,
+        )
+
+    if isinstance(raw_theory, dict):
+        explanation = str(
+            raw_theory.get("explanation")
+            or raw_theory.get("content")
+            or raw_theory.get("summary")
+            or ""
+        ).strip()
+        examples = raw_theory.get("examples") or []
+        if not isinstance(examples, list):
+            examples = []
+        if explanation or examples or grammar_points:
+            return GrammarTheoryResponse(
+                grammar_item_id=grammar_item_id,
+                version=str(raw_theory.get("version") or (lesson.updated_at.isoformat() if lesson.updated_at else "")),
+                title=str(raw_theory.get("title") or lesson.title),
+                level=raw_theory.get("level") or sanitized.get("level"),
+                topic=raw_theory.get("topic"),
+                summary=raw_theory.get("summary") or lesson.description,
+                explanation=explanation or (lesson.description or lesson.title),
+                examples=examples,
+                grammar_points=grammar_points,
+                linked_exercise_ids=linked_ids,
+            )
+
+    if isinstance(raw_theory, str) and raw_theory.strip():
+        return GrammarTheoryResponse(
+            grammar_item_id=grammar_item_id,
+            version=lesson.updated_at.isoformat() if lesson.updated_at else None,
+            title=lesson.title,
+            level=sanitized.get("level"),
+            summary=lesson.description,
+            explanation=raw_theory.strip(),
+            examples=[],
+            grammar_points=grammar_points,
+            linked_exercise_ids=linked_ids,
+        )
+
+    if lesson.lesson_type == "grammar" and grammar_points:
+        return GrammarTheoryResponse(
+            grammar_item_id=grammar_item_id,
+            version=lesson.updated_at.isoformat() if lesson.updated_at else None,
+            title=lesson.title,
+            level=sanitized.get("level"),
+            summary=lesson.description,
+            explanation=lesson.description or lesson.title,
+            examples=[],
+            grammar_points=grammar_points,
+            linked_exercise_ids=linked_ids,
+        )
+
+    if lesson.lesson_type == "grammar":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Grammar lesson content is missing theory",
+        )
+
+    return None
+
+
 @router.post("/lessons/{lesson_id}/start", response_model=ApiResponse[LessonStartResponse])
 async def start_lesson(
     lesson_id: UUID,
@@ -88,6 +214,54 @@ async def start_lesson(
     lesson = result.scalar_one_or_none()
     if not lesson:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found")
+    if not is_lesson_learner_visible(lesson):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Lesson is in draft/review and not published yet",
+        )
+
+    # Enforce shared roadmap unlock policy before resuming or creating an attempt.
+    units_result = await db.execute(
+        select(Unit)
+        .options(selectinload(Unit.lessons))
+        .where(Unit.course_id == lesson.course_id)
+    )
+    course_units = units_result.scalars().all()
+    all_course_lesson_ids = [
+        item.id for unit in course_units for item in (unit.lessons or [])
+    ]
+    completed_ids: set[UUID] = set()
+    if all_course_lesson_ids:
+        up_rows = await db.execute(
+            select(UserProgress.lesson_id).where(
+                and_(
+                    UserProgress.user_id == current_user.id,
+                    UserProgress.lesson_id.in_(all_course_lesson_ids),
+                    UserProgress.status == "completed",
+                )
+            )
+        )
+        completed_ids.update(up_rows.scalars().all())
+        lc_rows = await db.execute(
+            select(LessonCompletion.lesson_id).where(
+                and_(
+                    LessonCompletion.user_id == current_user.id,
+                    LessonCompletion.lesson_id.in_(all_course_lesson_ids),
+                )
+            )
+        )
+        completed_ids.update(lc_rows.scalars().all())
+
+    unlock_decisions = evaluate_course_unlocks(
+        course_units, completed_ids, playable_only=True
+    )
+    decision = unlock_decisions.get(lesson.id)
+    if decision is not None and decision.is_locked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=decision.unlock_reason
+            or "Lesson is locked. Complete previous lessons first.",
+        )
     
     # Check for active attempt (not finished)
     result = await db.execute(
@@ -176,20 +350,29 @@ async def get_lesson_content(
     
     if not lesson:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found")
+    if not is_lesson_learner_visible(lesson):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Lesson is in draft/review and not published yet",
+        )
     
     # Parse exercises from lesson.content (JSON field)
+    # Never expose answer material (correct_answer, options[].is_correct,
+    # explanation) in the pre-attempt learner content payload. Answers and
+    # explanations are returned by POST /attempts/{attempt_id}/answer after
+    # submission.
     exercises = []
     if lesson.content and isinstance(lesson.content, dict):
         raw_exercises = lesson.content.get('exercises', [])
         for idx, ex in enumerate(raw_exercises):
-            # Parse options if present
+            # Parse options if present without leaking correctness flags
             options = None
             if 'options' in ex and ex['options']:
                 options = [
                     ExerciseOption(
                         id=str(i),
                         text=opt if isinstance(opt, str) else opt.get('text', ''),
-                        is_correct=(opt == ex.get('correct_answer')) if isinstance(opt, str) else opt.get('is_correct', False)
+                        is_correct=None,
                     )
                     for i, opt in enumerate(ex['options'])
                 ]
@@ -201,8 +384,8 @@ async def get_lesson_content(
                 phase=ex.get('phase'),
                 question=ex.get('question', ''),
                 options=options,
-                correct_answer=str(ex.get('correct_answer', '')),
-                explanation=ex.get('explanation'),
+                correct_answer=None,
+                explanation=None,
                 hint=ex.get('hint'),
                 audio_url=ex.get('audio_url'),
                 image_url=ex.get('image_url'),
@@ -217,8 +400,53 @@ async def get_lesson_content(
                 status.HTTP_409_CONFLICT,
                 "Lesson content is missing exercises",
             )
-        exercises = _generate_demo_exercises(lesson.title)
+        demo_exercises = _generate_demo_exercises(lesson.title)
+        exercises = [
+            Exercise(
+                id=ex.id,
+                type=ex.type,
+                ui_type=ex.ui_type,
+                phase=ex.phase,
+                question=ex.question,
+                options=[
+                    ExerciseOption(id=opt.id, text=opt.text, is_correct=None)
+                    for opt in ex.options
+                ] if ex.options else None,
+                correct_answer=None,
+                explanation=None,
+                hint=ex.hint,
+                audio_url=ex.audio_url,
+                image_url=ex.image_url,
+                difficulty=ex.difficulty,
+                points=ex.points,
+            )
+            for ex in demo_exercises
+        ]
     
+    grammar_theory = await _resolve_grammar_theory(db, lesson, exercises)
+
+    theory_viewed = False
+    if grammar_theory is not None:
+        cache_key = build_cache_key(
+            "grammar_theory_viewed",
+            user_id=str(current_user.id),
+            lesson_id=str(lesson.id),
+        )
+        cached_view = await get_cached(cache_key)
+        if cached_view:
+            theory_viewed = True
+        else:
+            progress_row = await db.execute(
+                select(UserProgress.status).where(
+                    and_(
+                        UserProgress.user_id == current_user.id,
+                        UserProgress.lesson_id == lesson.id,
+                    )
+                )
+            )
+            if progress_row.scalar_one_or_none() == "completed":
+                theory_viewed = True
+
     return ApiResponse(
         success=True,
         message="Lesson content retrieved",
@@ -233,8 +461,100 @@ async def get_lesson_content(
             pass_threshold=lesson.pass_threshold,
             estimated_minutes=lesson.estimated_minutes,
             total_exercises=len(exercises),
-            exercises=exercises
+            exercises=exercises,
+            grammar_theory=grammar_theory,
+            theory_viewed=theory_viewed,
         )
+    )
+
+
+@router.post("/lessons/{lesson_id}/theory-viewed", response_model=ApiResponse[TheoryViewedResponse])
+async def mark_lesson_theory_viewed(
+    lesson_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Record that the learner viewed a lesson's grammar theory without awarding XP or completing the lesson."""
+    result = await db.execute(select(Lesson).where(Lesson.id == lesson_id))
+    lesson = result.scalar_one_or_none()
+    if not lesson:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found")
+    if not is_lesson_learner_visible(lesson):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This lesson is not published yet",
+        )
+
+    now = datetime.now(timezone.utc)
+    cache_key = build_cache_key(
+        "grammar_theory_viewed",
+        user_id=str(current_user.id),
+        lesson_id=str(lesson.id),
+    )
+    await set_cached(cache_key, {"viewed_at": now.isoformat()}, ttl=86400 * 30)
+
+    # Ensure a UserProgress record exists as in_progress (never completed) so
+    # theory viewing alone cannot complete the lesson or award XP.
+    prog_res = await db.execute(
+        select(UserProgress).where(
+            and_(
+                UserProgress.user_id == current_user.id,
+                UserProgress.lesson_id == lesson.id,
+            )
+        )
+    )
+    progress = prog_res.scalar_one_or_none()
+    dirty = False
+    if progress is None:
+        db.add(
+            UserProgress(
+                user_id=current_user.id,
+                lesson_id=lesson.id,
+                course_id=lesson.course_id,
+                status="in_progress",
+                score=0,
+                attempts=0,
+            )
+        )
+        dirty = True
+
+    raw_content = lesson.content if isinstance(lesson.content, dict) else {}
+    grammar_item_id = _parse_optional_uuid(
+        raw_content.get("grammar_item_id") or raw_content.get("grammar_id")
+    )
+    if grammar_item_id is not None:
+        ug_res = await db.execute(
+            select(UserGrammarItem).where(
+                and_(
+                    UserGrammarItem.user_id == current_user.id,
+                    UserGrammarItem.grammar_item_id == grammar_item_id,
+                )
+            )
+        )
+        if ug_res.scalar_one_or_none() is None:
+            gi_exists = await db.execute(
+                select(GrammarItem.id).where(GrammarItem.id == grammar_item_id)
+            )
+            if gi_exists.scalar_one_or_none() is not None:
+                db.add(
+                    UserGrammarItem(
+                        user_id=current_user.id,
+                        grammar_item_id=grammar_item_id,
+                    )
+                )
+                dirty = True
+
+    if dirty:
+        await db.commit()
+
+    return ApiResponse(
+        success=True,
+        message="Lesson theory marked as viewed",
+        data=TheoryViewedResponse(
+            lesson_id=lesson.id,
+            theory_viewed=True,
+            viewed_at=now,
+        ),
     )
 
 
@@ -249,6 +569,11 @@ async def get_lesson_context(
     lesson = result.scalar_one_or_none()
     if not lesson:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found")
+    if not is_lesson_learner_visible(lesson):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Lesson is in draft/review and not published yet",
+        )
 
     raw_content = lesson.content if isinstance(lesson.content, dict) else {}
     content = _sanitize_lesson_context(raw_content)
@@ -574,6 +899,13 @@ async def submit_answer(
     # Get lesson to validate answer
     lesson_result = await db.execute(select(Lesson).where(Lesson.id == attempt.lesson_id))
     lesson = lesson_result.scalar_one_or_none()
+    if not lesson:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found")
+    if not is_lesson_learner_visible(lesson):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This lesson is not published yet",
+        )
     
     # Validate answer against lesson content
     is_correct, correct_answer, explanation, concept_id = await _validate_answer(
@@ -636,7 +968,7 @@ async def submit_answer(
         data=AnswerSubmitResponse(
             question_attempt_id=qa.id,
             is_correct=is_correct,
-            correct_answer=correct_answer if not is_correct else None,
+            correct_answer=correct_answer,
             explanation=explanation,
             xp_earned=xp,
             lives_remaining=attempt.lives_remaining,
@@ -1016,6 +1348,11 @@ async def complete_lesson(
     lesson = result.scalar_one_or_none()
     if not lesson:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lesson not found")
+    if not is_lesson_learner_visible(lesson):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This lesson is not published yet",
+        )
     
     # Complete
     attempt.finished_at = datetime.now(timezone.utc)
@@ -1069,7 +1406,8 @@ async def complete_lesson(
         str(current_user.id),
         str(attempt.lesson_id),
         float(attempt.score),
-        pass_threshold
+        pass_threshold,
+        commit=False,
     )
     
     # Decide performance-based XP to award for first-time pass
@@ -1086,7 +1424,8 @@ async def complete_lesson(
         str(current_user.id),
         str(lesson.course_id),
         new_progress,
-        xp_to_award
+        xp_to_award,
+        commit=False,
     )
     
     # --- Update User.total_xp and level/rank services ---
@@ -1248,7 +1587,11 @@ async def get_course_roadmap(
     # both reject them) — hide them so they can't dead-end the unlock chain.
     playable_lessons = {
         unit.id: sorted(
-            (lesson for lesson in unit.lessons if lesson.exercise_count > 0),
+            (
+                lesson
+                for lesson in unit.lessons
+                if lesson.exercise_count > 0 and is_lesson_learner_visible(lesson)
+            ),
             key=lambda lesson: lesson.order_index,
         )
         for unit in course.units
@@ -1267,6 +1610,23 @@ async def get_course_roadmap(
         )
     )
     progress_map = {p.lesson_id: p for p in result.scalars().all()}
+    completed_ids: set[UUID] = {
+        lid for lid, p in progress_map.items() if p.status == "completed"
+    }
+    if lesson_ids:
+        lc_result = await db.execute(
+            select(LessonCompletion.lesson_id).where(
+                and_(
+                    LessonCompletion.user_id == current_user.id,
+                    LessonCompletion.lesson_id.in_(lesson_ids),
+                )
+            )
+        )
+        completed_ids.update(lc_result.scalars().all())
+
+    unlock_decisions = evaluate_course_unlocks(
+        course.units, completed_ids, playable_only=True
+    )
     
     # Get streak
     result = await db.execute(select(Streak).where(Streak.user_id == current_user.id))
@@ -1302,22 +1662,9 @@ async def get_course_roadmap(
         sorted_lessons = playable_lessons[unit.id]
         for lesson_index, lesson in enumerate(sorted_lessons):
             progress = progress_map.get(lesson.id)
-
-            previous_lesson = (
-                sorted_lessons[lesson_index - 1]
-                if lesson_index > 0
-                else None
-            )
-            previous_progress = (
-                progress_map.get(previous_lesson.id)
-                if previous_lesson
-                else None
-            )
-            is_locked = previous_lesson is not None and not (
-                previous_progress and previous_progress.status == "completed"
-            )
-
-            is_completed = (progress.status == "completed") if progress else False
+            decision = unlock_decisions.get(lesson.id)
+            is_locked = decision.is_locked if decision is not None else False
+            is_completed = lesson.id in completed_ids
             if is_completed:
                 unit_completed += 1
                 completed_lessons_count += 1

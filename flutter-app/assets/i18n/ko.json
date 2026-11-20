@@ -1433,7 +1433,8 @@
     "startLesson": "레슨 시작",
     "correct": "옳은!",
     "notQuite": "좀 빠지는",
-    "loadingRoadmap": "로드맵을 불러오는 중…"
+    "loadingRoadmap": "로드맵을 불러오는 중…",
+    "lessonLockedHint": "이전 레슨을 완료하면 이 레슨이 잠금 해제됩니다."
   },
   "books": {
     "library": "도서 도서관",

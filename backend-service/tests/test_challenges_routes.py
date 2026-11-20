@@ -12,7 +12,7 @@ BASE = /api/v1/challenges
 
 import uuid
 import pytest
-from datetime import date
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 
@@ -28,7 +28,7 @@ TEST_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 def _today_challenge_ids() -> tuple:
     """Return challenge ids generated for our test user today (deterministic)."""
     from app.routes.challenges import get_challenges_for_user
-    challenges = get_challenges_for_user(TEST_USER_ID, date.today())
+    challenges = get_challenges_for_user(TEST_USER_ID, datetime.now(timezone.utc).date())
     return [c["id"] for c in challenges], challenges
 
 
@@ -511,7 +511,7 @@ class TestEveryTemplateIsMeasurable:
 
         random.seed(1234)
         first = random.random()
-        get_challenges_for_user(TEST_USER_ID, date.today())
+        get_challenges_for_user(TEST_USER_ID, datetime.now(timezone.utc).date())
         rest = [random.random() for _ in range(2)]
 
         assert [first, *rest] == expected

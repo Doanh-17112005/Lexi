@@ -19,12 +19,22 @@ export const ContentAnalyticsPage = () => {
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
     Promise.allSettled([getContentPerformance(), getVocabEffectiveness()])
       .then(([perfRes, vocabRes]) => {
         if (perfRes.status === "fulfilled") setPerf(perfRes.value.data || null);
         if (vocabRes.status === "fulfilled") setVocab(vocabRes.value.data || null);
+        const failures: string[] = [];
+        if (perfRes.status === "rejected") {
+          failures.push(perfRes.reason instanceof Error ? perfRes.reason.message : "content performance");
+        }
+        if (vocabRes.status === "rejected") {
+          failures.push(vocabRes.reason instanceof Error ? vocabRes.reason.message : "vocabulary effectiveness");
+        }
+        if (failures.length > 0) {
+          setError(`Lỗi tải analytics: ${failures.join("; ")}`);
+        }
       })
-      .catch((err) => setError(err?.message || "Lỗi tải analytics"))
       .finally(() => setLoading(false));
   }, []);
 

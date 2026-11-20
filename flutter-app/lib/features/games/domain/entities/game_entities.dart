@@ -1289,6 +1289,7 @@ class GrammarQuizGame {
   final String sessionId;
   final String cefrLevel;
   final String topic;
+  final String difficultyTier;
   final int timerSecondsPerQuestion;
   final int totalXp;
   final List<GrammarQuizQuestion> questions;
@@ -1297,6 +1298,7 @@ class GrammarQuizGame {
     this.sessionId = '',
     required this.cefrLevel,
     required this.topic,
+    this.difficultyTier = 'medium',
     required this.timerSecondsPerQuestion,
     required this.totalXp,
     required this.questions,
@@ -1307,6 +1309,7 @@ class GrammarQuizGame {
       sessionId: json['session_id'] as String? ?? '',
       cefrLevel: json['cefr_level'] as String? ?? 'B1',
       topic: json['topic'] as String? ?? 'mixed',
+      difficultyTier: json['difficulty_tier'] as String? ?? 'medium',
       timerSecondsPerQuestion: json['timer_seconds_per_question'] as int? ?? 12,
       totalXp: json['total_xp'] as int? ?? 25,
       questions:
@@ -1323,6 +1326,7 @@ class GrammarQuizGame {
     'session_id': sessionId,
     'cefr_level': cefrLevel,
     'topic': topic,
+    'difficulty_tier': difficultyTier,
     'timer_seconds_per_question': timerSecondsPerQuestion,
     'total_xp': totalXp,
     'questions': questions.map((q) => q.toJson()).toList(),
@@ -1332,6 +1336,7 @@ class GrammarQuizGame {
     String? sessionId,
     String? cefrLevel,
     String? topic,
+    String? difficultyTier,
     int? timerSecondsPerQuestion,
     int? totalXp,
     List<GrammarQuizQuestion>? questions,
@@ -1340,6 +1345,7 @@ class GrammarQuizGame {
       sessionId: sessionId ?? this.sessionId,
       cefrLevel: cefrLevel ?? this.cefrLevel,
       topic: topic ?? this.topic,
+      difficultyTier: difficultyTier ?? this.difficultyTier,
       timerSecondsPerQuestion:
           timerSecondsPerQuestion ?? this.timerSecondsPerQuestion,
       totalXp: totalXp ?? this.totalXp,

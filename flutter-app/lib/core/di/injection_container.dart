@@ -50,7 +50,9 @@ Future<void> initializeDependencies({bool skipDatabase = false}) async {
   registerYouTubeModule(); // Phase 1: YouTube Video Integration
   registerNewsModule(); // Phase 2: News Reading
   registerGamesModule(); // Phase 3: English Games + XP System
-  await registerPodcastModule(); // Phase 4: Podcast — async (AudioService.init)
+  await registerPodcastModule(
+    skipAudioService: skipDatabase,
+  ); // Phase 4: Podcast — async (AudioService.init)
   registerBooksModule(); // Phase 5: Book Reading
   registerLexiChatModule(); // Phase 6: Lexi Chat — Story Adventure
 }
